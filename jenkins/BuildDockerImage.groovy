@@ -372,7 +372,7 @@ def buildImage(config, imageKeyToTag)
                 IMAGE_WITH_TAG=${imageWithTag} \
                 STAGE=${dockerfileStage} \
                 BUILD_WHEEL_OPTS='-j ${build_jobs}' ${args} ${buildWheelArgs}
-                """, sleepInSecs: randomSleep, numRetries: 2, shortCommondRunTimeMax: 7200)
+                """, sleepInSecs: randomSleep, numRetries: 6, shortCommondRunTimeMax: 10800)
             }
             if (target == "ngc-release") {
                 imageKeyToTag["NGC Release Image ${config.arch}"] = imageWithTag
@@ -725,7 +725,7 @@ pipeline {
                         }
                         cmd += imageKeyToTag.values().join(" ")
                         withCredentials([usernamePassword(credentialsId: "NSPECT_CLIENT-${nspect_env}", usernameVariable: 'NSPECT_CLIENT_ID', passwordVariable: 'NSPECT_CLIENT_SECRET')]) {
-                            trtllm_utils.llmExecStepWithRetry(this, script: cmd, numRetries: 6, shortCommondRunTimeMax: 7200)
+                            trtllm_utils.llmExecStepWithRetry(this, script: cmd, sleepInSecs: 600, numRetries: 6, shortCommondRunTimeMax: 7200)
                         }
                     }
                 }
