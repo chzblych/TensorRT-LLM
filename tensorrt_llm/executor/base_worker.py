@@ -125,12 +125,13 @@ class BaseWorker(GenerationExecutor):
         Note:
             If the process already has constrained affinity, a warning is logged.
             Configuration is handled as follows:
-                TLLM_NUMA_WORKER_AFFINITY = <unset>
-                    -> affinity is auto-configured only if it is unconstrained
-                TLLM_NUMA_WORKER_AFFINITY = 1
-                    -> affinity is unconditionally auto-configured
-                TLLM_NUMA_WORKER_AFFINITY = 0 or any other value
-                    -> affinity is unconditionally _not_ auto-configured
+                TLLM_NUMA_AWARE_WORKER_AFFINITY = <unset>
+                    -> Affinity is automatically configured if it is unconstrained,
+                       and deleted if it is constrained externally by the user.
+                TLLM_NUMA_AWARE_WORKER_AFFINITY = 1
+                    -> Affinity is unconditionally auto-configured.
+                TLLM_NUMA_AWARE_WORKER_AFFINITY = 0 or any other value
+                    -> Affinity is unconditionally _not_ auto-configured.
         '''
 
         # Get the current affinity setting
@@ -141,22 +142,31 @@ class BaseWorker(GenerationExecutor):
         all_cpus = list(range(psutil.cpu_count()))
 
         constrained_affinity = (cpu_affinity != all_cpus)
+        numa_aware_affinity = os.environ.get("TLLM_NUMA_AWARE_WORKER_AFFINITY")
 
-        # If the process is affined to a constrained set of CPUs, warn the user
-        # so as to ensure that this is what is intended
+        # If affinity is constrained but the user hasn't explicitly
+        # requested NUMA-aware affinity, remove the constraints.
         if constrained_affinity:
             logger.warning(
                 f"Worker process {pid} is affined to run on the following CPUs: "
                 f"{cpu_affinity} (subset of all logical CPUs). This may harm "
                 f"performance if set incorrectly.")
+            if numa_aware_affinity is None:
+                logger.warning(
+                    f"Worker process {pid} has constrained CPU affinity "
+                    f"but `TLLM_NUMA_AWARE_WORKER_AFFINITY` is not set. "
+                    f"Removing CPU affinity constraints.")
+                process.cpu_affinity(all_cpus)
 
         # If affinity is unconstrained and the user hasn't explicitly
         # prohibited it or the user has explicitly requested it, choose the
         # optimal affinity based upon the NUMA topology
-        numa_aware_affinity = os.environ.get("TLLM_NUMA_AWARE_WORKER_AFFINITY")
         if ((numa_aware_affinity is None and not constrained_affinity)
                 or (numa_aware_affinity == "1")):
             process.cpu_affinity(get_numa_aware_cpu_affinity(device_id))
+            logger.info(
+                f"Worker process {pid} CPU affinity set to "
+                f"{process.cpu_affinity()} for optimal NUMA-aware scheduling.")
 
     def _get_comm_ranks_device_id(self):
         device_id = self.global_rank % torch.cuda.device_count()
@@ -423,6 +433,8 @@ class BaseWorker(GenerationExecutor):
 
         context_phase_params = None
         request_type = tllm.RequestType.REQUEST_TYPE_CONTEXT_AND_GENERATION
+        disagg_request_id = 0
+
         if request.disaggregated_params is not None:
             assert (
                 not self._is_pytorch_backend
@@ -431,6 +443,7 @@ class BaseWorker(GenerationExecutor):
                 == "context_and_generation"
             ), "kv_cache_transceiver is disabled, please set 'cache_transceiver_config: backend:<backend_type>` in config file for disaggregated serving"
             request_type = request.disaggregated_params.get_request_type()
+            disagg_request_id = request.disaggregated_params.disagg_request_id
             if request_type == tllm.RequestType.REQUEST_TYPE_GENERATION_ONLY:
                 context_phase_params = request.disaggregated_params.get_context_phase_params(
                 )
@@ -531,7 +544,8 @@ class BaseWorker(GenerationExecutor):
                 guided_decoding_params=request.sampling_params.
                 _get_guided_decoding_params(),
                 bad_words=request.sampling_params._get_bad_words(),
-                stop_words=request.sampling_params._get_stop_words(),
+                stop_words=[] if request.sampling_params.ignore_eos else
+                request.sampling_params._get_stop_words(),
                 embedding_bias=request.sampling_params.embedding_bias,
                 lora_config=lora_config,
                 prompt_tuning_config=prompt_tuning_config,
@@ -548,9 +562,11 @@ class BaseWorker(GenerationExecutor):
                 kv_cache_retention_config=request.kv_cache_retention_config,
                 context_phase_params=context_phase_params,
                 type=request_type,
-                cache_salt_id=request.cache_salt_id)
+                cache_salt_id=request.cache_salt_id,
+                disagg_request_id=disagg_request_id)
             executor_request.py_num_logprobs = request.sampling_params.logprobs
             executor_request.py_lora_path = py_lora_path
+            executor_request.py_logprobs_mode = request.sampling_params.logprobs_mode
 
             if self._is_pytorch_backend and request.multimodal_params is not None:
                 if request.multimodal_params.multimodal_data is not None:

@@ -21,11 +21,11 @@ import tensorrt_llm.profiler as profiler
 from .. import LLM as PyTorchLLM
 from .._tensorrt_engine import LLM
 from ..evaluate import (GSM8K, MMLU, MMMU, CnnDailymail, GPQADiamond,
-                        GPQAExtended, GPQAMain, JsonModeEval, LongBenchV2)
+                        GPQAExtended, GPQAMain, JsonModeEval, LongBenchV1,
+                        LongBenchV2)
 from ..llmapi import BuildConfig, KvCacheConfig
 from ..llmapi.llm_utils import update_llm_args_with_extra_options
 from ..logger import logger, severity_map
-from ..mapping import CpType
 
 
 @click.group()
@@ -40,6 +40,14 @@ from ..mapping import CpType
               default=None,
               help="Path | Name of the tokenizer."
               "Specify this value only if using TensorRT engine as model.")
+@click.option(
+    "--custom_tokenizer",
+    type=str,
+    default=None,
+    help=
+    "Custom tokenizer type: alias (e.g., 'deepseek_v32') or Python import path "
+    "(e.g., 'tensorrt_llm.tokenizer.deepseek_v32.DeepseekV32Tokenizer'). [Experimental]"
+)
 @click.option(
     "--backend",
     type=click.Choice(["pytorch", "tensorrt"]),
@@ -75,10 +83,6 @@ from ..mapping import CpType
               type=int,
               default=1,
               help='Pipeline parallelism size.')
-@click.option("--cp_size",
-              type=int,
-              default=1,
-              help='Context parallelism size.')
 @click.option("--ep_size",
               type=int,
               default=None,
@@ -102,72 +106,68 @@ from ..mapping import CpType
               default=None,
               help="The revision to use for the HuggingFace model "
               "(branch name, tag name, or commit id).")
-@click.option("--extra_llm_api_options",
+@click.option("--config",
+              "--extra_llm_api_options",
+              "extra_llm_api_options",
               type=str,
               default=None,
-              help="Path to a YAML file that overwrites the parameters")
+              help="Path to a YAML file that overwrites the parameters. "
+              "Can be specified as either --config or --extra_llm_api_options.")
 @click.option("--disable_kv_cache_reuse",
               is_flag=True,
               default=False,
               help="Flag for disabling KV cache reuse.")
-@click.option("--cp_config",
-              type=dict,
-              default=None,
-              help="Context parallelism configuration as JSON.")
 @click.pass_context
-def main(ctx, model: str, tokenizer: Optional[str], log_level: str,
-         backend: str, max_beam_width: int, max_batch_size: int,
-         max_num_tokens: int, max_seq_len: int, tp_size: int, pp_size: int,
-         ep_size: Optional[int], gpus_per_node: Optional[int],
-         kv_cache_free_gpu_memory_fraction: float, trust_remote_code: bool,
-         revision: Optional[str], extra_llm_api_options: Optional[str],
-         disable_kv_cache_reuse: bool, cp_size: int, cp_config: Optional[dict]):
+def main(ctx, model: str, tokenizer: Optional[str],
+         custom_tokenizer: Optional[str], log_level: str, backend: str,
+         max_beam_width: int, max_batch_size: int, max_num_tokens: int,
+         max_seq_len: int, tp_size: int, pp_size: int, ep_size: Optional[int],
+         gpus_per_node: Optional[int], kv_cache_free_gpu_memory_fraction: float,
+         trust_remote_code: bool, revision: Optional[str],
+         extra_llm_api_options: Optional[str], disable_kv_cache_reuse: bool):
     logger.set_level(log_level)
-    build_config = BuildConfig(max_batch_size=max_batch_size,
-                               max_num_tokens=max_num_tokens,
-                               max_beam_width=max_beam_width,
-                               max_seq_len=max_seq_len)
 
     kv_cache_config = KvCacheConfig(
         free_gpu_memory_fraction=kv_cache_free_gpu_memory_fraction,
         enable_block_reuse=not disable_kv_cache_reuse)
 
-    if cp_config is not None and "cp_type" in cp_config:
-        cp_config = cp_config.copy()
-        try:
-            cp_config["cp_type"] = CpType[cp_config["cp_type"].upper()]
-        except KeyError:
-            raise ValueError(f"Invalid cp_type: {cp_config['cp_type']}. " \
-                             f"Must be one of: {', '.join([t.name for t in CpType])}")
     llm_args = {
         "model": model,
         "tokenizer": tokenizer,
+        "custom_tokenizer": custom_tokenizer,
         "tensor_parallel_size": tp_size,
         "pipeline_parallel_size": pp_size,
-        "context_parallel_size": cp_size,
-        "cp_config": cp_config if cp_config is not None else {},
         "moe_expert_parallel_size": ep_size,
         "gpus_per_node": gpus_per_node,
         "trust_remote_code": trust_remote_code,
         "revision": revision,
-        "build_config": build_config,
         "kv_cache_config": kv_cache_config,
     }
+
+    if backend == 'pytorch':
+        llm_cls = PyTorchLLM
+        llm_args.update(max_batch_size=max_batch_size,
+                        max_num_tokens=max_num_tokens,
+                        max_beam_width=max_beam_width,
+                        max_seq_len=max_seq_len)
+    elif backend == 'tensorrt':
+        llm_cls = LLM
+        build_config = BuildConfig(max_batch_size=max_batch_size,
+                                   max_num_tokens=max_num_tokens,
+                                   max_beam_width=max_beam_width,
+                                   max_seq_len=max_seq_len)
+        llm_args.update(build_config=build_config)
+    else:
+        raise click.BadParameter(
+            f"{backend} is not a known backend, check help for available options.",
+            param_hint="backend")
 
     if extra_llm_api_options is not None:
         llm_args = update_llm_args_with_extra_options(llm_args,
                                                       extra_llm_api_options)
 
     profiler.start("trtllm init")
-    if backend == 'pytorch':
-        llm_args.pop("build_config", None)
-        llm = PyTorchLLM(**llm_args)
-    elif backend == 'tensorrt':
-        llm = LLM(**llm_args)
-    else:
-        raise click.BadParameter(
-            f"{backend} is not a known backend, check help for available options.",
-            param_hint="backend")
+    llm = llm_cls(**llm_args)
     profiler.stop("trtllm init")
     elapsed_time = profiler.elapsed_time_in_sec("trtllm init")
     logger.info(f"TRTLLM initialization time: {elapsed_time:.3f} seconds.")
@@ -185,6 +185,7 @@ main.add_command(GPQAMain.command)
 main.add_command(GPQAExtended.command)
 main.add_command(JsonModeEval.command)
 main.add_command(MMMU.command)
+main.add_command(LongBenchV1.command)
 main.add_command(LongBenchV2.command)
 
 if __name__ == "__main__":

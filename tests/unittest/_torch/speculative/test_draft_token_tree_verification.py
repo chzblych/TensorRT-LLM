@@ -23,7 +23,7 @@ def run_test(eagle_model_dir, max_seq_len, beam_width, use_dynamic_tree,
     spec_config = EagleDecodingConfig(
         max_draft_len=max_draft_len,
         max_total_draft_tokens=max_total_draft_tokens,
-        speculative_model_dir=eagle_model_dir,
+        speculative_model=eagle_model_dir,
         eagle3_one_model=False,
         eagle_choices=eagle_choices,
         use_dynamic_tree=use_dynamic_tree,
@@ -47,8 +47,8 @@ def run_test(eagle_model_dir, max_seq_len, beam_width, use_dynamic_tree,
         ))
     # fill with NOT_FINISHED to ensure that all finish reasons are NOT_FINISHED
     torch_sampler.store.finish_reasons.fill_(FinishReason.NOT_FINISHED.value)
-    finish_reasons_list = torch_sampler.store.finish_reasons[..., 0].to(
-        device="cpu").T.tolist()
+    finish_reasons_list = torch_sampler.store.finish_reasons.to(
+        device="cpu").permute(1, 0, 2).tolist()
     input_new_tokens_list = input_new_tokens.tolist()
     num_accepted_draft_tokens = torch_sampler._process_draft_tokens_tree(
         request=input_request,

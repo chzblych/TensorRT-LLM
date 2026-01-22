@@ -1,3 +1,4 @@
+import inspect
 import os
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -84,11 +85,12 @@ class WideEPMoE(MoE):
 
         self.use_cuda_graph = model_config.use_cuda_graph
 
-        # The maximum number of tokens in MoE are multiplied by DP size when attention DP is enabled
-        moe_max_num_tokens = model_config.max_num_tokens * model_config.mapping.dp_size
-        self.moe_max_num_tokens = model_config.moe_max_num_tokens or moe_max_num_tokens
+        # moe_max_num_tokens is set in ModelConfig.__post_init__ if not specified
+        # The default value is max_num_tokens * dp_size
+        self.moe_max_num_tokens = model_config.moe_max_num_tokens
         # The auxiliary CUDA stream and CUDA events are only used when MoE chunking is applied
-        if self.moe_max_num_tokens < moe_max_num_tokens:
+        default_moe_max_num_tokens = model_config.max_num_tokens * model_config.mapping.dp_size
+        if self.moe_max_num_tokens < default_moe_max_num_tokens:
             self.aux_stream = aux_stream_dict[
                 AuxStreamType.
                 MoeChunkingOverlap] if aux_stream_dict is not None else torch.cuda.Stream(
@@ -157,10 +159,6 @@ class WideEPMoE(MoE):
         self._weights_created = False
         if not model_config.skip_create_weights_in_init:
             self.create_weights()
-
-        # Debug function for eliminating imbalance during performance analysis.
-        self.enable_dummy_allreduce = os.environ.get(
-            "TRTLLM_ENABLE_DUMMY_ALLREDUCE", "0") == "1"
 
         # MoE op will be lazily initialized when first accessed (see moe_op_impl property)
         self._moe_op_impl = None
@@ -341,16 +339,6 @@ class WideEPMoE(MoE):
             self._moe_op_impl = MoEOpSelector.select_op(self)
         return self._moe_op_impl
 
-    def dummy_allreduce(self):
-        """
-        Debug function for eliminating imbalance during performance analysis.
-        Creates a small dummy tensor and performs allreduce to synchronize processes
-        and eliminate timing imbalances for more accurate profiling measurements.
-        """
-        dummy_tensor = torch.zeros(4, dtype=torch.float32, device='cuda')
-        dummy_tensor = self.all_reduce(dummy_tensor)
-        return dummy_tensor
-
     def reducescatter_or_allreduce(
         self,
         inputs,
@@ -380,6 +368,13 @@ class WideEPMoE(MoE):
             return self.has_fp8_qdq or self.has_nvfp4 or self.has_w4afp8
         else:
             return False
+
+    def is_low_precision_combine_supported(self):
+        if not self.use_low_precision_combine:
+            return False
+        if self.alltoall_method_type == AlltoallMethodType.DeepEPLowLatency:
+            return self.has_fp8_qdq or self.has_nvfp4 or self.has_w4afp8
+        return False
 
     def forward_chunk(
         self,
@@ -670,8 +665,7 @@ class WideEPMoE(MoE):
                 final_hidden_states = final_hidden_states.view(
                     self.expert_size_per_partition,
                     num_tokens_per_expert_for_fused_moe, self.hidden_size)
-                if self.use_low_precision_combine:
-                    assert self.has_nvfp4 or self.has_w4afp8 or self.has_fp8_qdq, "Low precision combine only supports nvfp4, w4afp8 and fp8 qdq"
+                if self.is_low_precision_combine_supported():
                     precision = "fp8"
                     global_scales = None
                     if self.has_nvfp4:
@@ -942,16 +936,12 @@ class WideEPMoE(MoE):
         assert len(weights) == 1
         weights = weights[0]
 
-        if not isinstance(self.quant_method, UnquantizedFusedMoEMethod):
-            assert not allow_partial_loading, "Partial loading is not supported for quantized MoE now"
-            self.quant_method.load_weights(self, weights,
-                                           self.weight_loading_mode)
-        else:
-            self.quant_method.load_weights(
-                self,
-                weights,
-                self.weight_loading_mode,
-                allow_partial_loading=allow_partial_loading)
+        kargs = {}
+        if "allow_partial_loading" in inspect.getfullargspec(
+                self.quant_method.load_weights).args:
+            kargs["allow_partial_loading"] = allow_partial_loading
+        self.quant_method.load_weights(self, weights, self.weight_loading_mode,
+                                       **kargs)
 
     def post_load_weights(self):
         self.quant_method.post_load_weights(self)
@@ -965,6 +955,7 @@ class WideEPMoE(MoE):
         output_dtype: Optional[torch.dtype] = None,
         all_rank_num_tokens: Optional[List[int]] = None,
         use_dp_padding: Optional[bool] = None,
+        alltoall_result_do_sum: bool = True,
         **kwargs,
     ) -> Union[torch.Tensor, List[torch.Tensor]]:
         moe_output = super().forward_fake(
@@ -975,7 +966,7 @@ class WideEPMoE(MoE):
             all_rank_num_tokens=all_rank_num_tokens,
             use_dp_padding=use_dp_padding,
             **kwargs)
-        if self.alltoall_method_type == AlltoallMethodType.MNNVL:
+        if self.alltoall_method_type == AlltoallMethodType.NVLinkTwoSided and not alltoall_result_do_sum:
             shape = moe_output.shape
             top_k = self.routing_method.experts_per_token
             new_shape = [shape[0], top_k, shape[1]]

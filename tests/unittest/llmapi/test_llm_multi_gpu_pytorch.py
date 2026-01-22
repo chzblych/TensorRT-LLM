@@ -47,6 +47,7 @@ def test_llama_7b_lora_tp2():
 
 
 @pytest.mark.gpu2
+@pytest.mark.skip(reason="https://nvbugs/5682551")
 def test_llama_7b_multi_lora_tp2():
     # For LoRA checkpoints without finetuned embedding and lm_head, we can either:
     # (1) specify lora_target_modules, or
@@ -65,6 +66,7 @@ def test_llama_7b_multi_lora_tp2():
         cuda_graph_config=None)
 
 
+@skip_ray  # https://nvbugs/5727075
 @pytest.mark.gpu2
 def test_phi3_lora_fused_modules_output_on_tp2_identical_to_tp1() -> None:
     check_phi3_lora_fused_modules_output_tp2_identical_to_tp1(

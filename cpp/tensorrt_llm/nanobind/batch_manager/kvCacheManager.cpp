@@ -123,7 +123,7 @@ public:
         NB_OVERRIDE_PURE(removeSequence, requestId, llmRequest, pinOnRelease);
     }
 
-    std::optional<tbk::KVCacheBlock::IdType> storeBlocksForReuse(tb::LlmRequest::RequestIdType requestId,
+    std::vector<tbk::KVCacheBlock::IdType> storeBlocksForReuse(tb::LlmRequest::RequestIdType requestId,
         tensorrt_llm::common::OptionalRef<tb::LlmRequest const> llmRequest, bool pinBlocks) override
     {
         NB_OVERRIDE_PURE(storeBlocksForReuse, requestId, llmRequest, pinBlocks);
@@ -233,6 +233,11 @@ public:
     SizeType32 getPoolLayerIdx(SizeType32 layer_idx) const override
     {
         NB_OVERRIDE_PURE(getPoolLayerIdx, layer_idx);
+    }
+
+    void syncTransferManagerWithBufferManager() override
+    {
+        NB_OVERRIDE_PURE(syncTransferManagerWithBufferManager);
     }
 
     void refreshBlocks() override
@@ -476,11 +481,16 @@ void tb::kv_cache_manager::KVCacheManagerBindings::initBindings(nb::module_& m)
         .def("store_context_blocks", &BaseKVCacheManager::storeContextBlocks, nb::call_guard<nb::gil_scoped_release>())
         .def("store_blocks_for_reuse", &BaseKVCacheManager::storeBlocksForReuse,
             nb::call_guard<nb::gil_scoped_release>())
+        .def("find_new_context_block", &BaseKVCacheManager::findNewContextBlock, nb::arg("unique_tokens"),
+            nb::arg("llm_request"), nb::call_guard<nb::gil_scoped_release>())
         .def("get_cache_block_ids", &BaseKVCacheManager::getCacheBlockIds, nb::call_guard<nb::gil_scoped_release>())
         .def("get_batch_cache_block_ids", &BaseKVCacheManager::getBatchCacheBlockIds,
             nb::call_guard<nb::gil_scoped_release>())
         .def("flush_iteration_events", &BaseKVCacheManager::flushIterationEvents,
             nb::call_guard<nb::gil_scoped_release>())
+        .def("sync_transfer_manager_with_buffer_manager", &BaseKVCacheManager::syncTransferManagerWithBufferManager,
+            nb::call_guard<nb::gil_scoped_release>())
+        .def("refresh_blocks", &BaseKVCacheManager::refreshBlocks, nb::call_guard<nb::gil_scoped_release>())
         .def("get_last_block_id", &BaseKVCacheManager::getLastBlockId, nb::call_guard<nb::gil_scoped_release>())
         .def("unpin_blocks_by_id", &BaseKVCacheManager::unpinBlocksById, nb::call_guard<nb::gil_scoped_release>())
         .def("reset_reuse_state", &BaseKVCacheManager::resetReuseState, nb::call_guard<nb::gil_scoped_release>());
@@ -516,7 +526,14 @@ void tb::kv_cache_manager::KVCacheManagerBindings::initBindings(nb::module_& m)
             nb::arg("event_manager") = nullptr, nb::arg("enable_partial_reuse") = true,
             nb::arg("copy_on_partial_reuse") = true, nb::arg("kv_connector_manager") = nullptr,
             nb::arg("enable_indexer_k_cache") = false, nb::arg("indexer_k_cache_quant_block_size") = 128,
-            nb::arg("indexer_k_cache_index_head_dim") = 0, nb::call_guard<nb::gil_scoped_release>());
+            nb::arg("indexer_k_cache_index_head_dim") = 0, nb::call_guard<nb::gil_scoped_release>())
+        .def(
+            "scheduling_has_free_blocks",
+            [](tbk::KVCacheManager& self, SizeType32 numRequired, SizeType32 windowSize)
+            { return self.getBlockManager().schedulingHasFreeBlocks(numRequired, windowSize); },
+            nb::arg("num_required"), nb::arg("window_size"), nb::call_guard<nb::gil_scoped_release>())
+        .def_prop_ro(
+            "is_variable_window", [](tbk::KVCacheManager& self) { return self.getBlockManager().isVariableWindow(); });
 }
 
 void tb::BasePeftCacheManagerBindings::initBindings(nb::module_& m)

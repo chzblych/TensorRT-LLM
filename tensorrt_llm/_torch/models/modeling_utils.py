@@ -12,13 +12,14 @@ from torch.utils._python_dispatch import TorchDispatchMode
 from torch.utils._pytree import tree_any_only
 from tqdm import tqdm
 
+from tensorrt_llm._utils import local_mpi_rank
 from tensorrt_llm.lora_manager import HfLoraLoader
 from tensorrt_llm.models.convert_utils import split_matrix_tp
 
 from ...logger import logger
 from ...models.modeling_utils import QuantConfig
 from ..attention_backend import AttentionMetadata
-from ..distributed.communicator import pp_recv, pp_send
+from ..distributed.communicator import pp_recv_tensors, pp_send_tensors
 from ..model_config import ModelConfig, TConfig
 from ..modules.attention import Attention
 from ..modules.embedding import Embedding, LMHead
@@ -71,6 +72,7 @@ class MetaInitMode(TorchDispatchMode):
     random_init_ops = {
         aten.normal_.default,
         aten.uniform_.default,
+        aten.log.default,
         # TODO: this is not a exhaustive list for random init ops, add as needed
     }
 
@@ -155,6 +157,8 @@ def skip_forward(
     if hasattr(module, 'skip_forward'):
         module.forward = module.skip_forward
         remove_weights(module, ignore_modules)
+    elif isinstance(module, DecoderModelForCausalLM):
+        remove_weights(module, ignore_modules)
     else:
         logger.warning(
             f"Fail to skip forward since {module.__class__.__name__} "
@@ -172,11 +176,12 @@ def forward_after_recv(forward_fn):
         residual=...,
         **kwargs,
     ):
-        pp_recv(hidden_states)
         if residual is not ...:
             if residual is None:
                 residual = torch.empty_like(hidden_states)
-            pp_recv(residual)
+            pp_recv_tensors([hidden_states, residual])
+        else:
+            pp_recv_tensors([hidden_states])
         return forward_fn(
             position_ids,
             hidden_states,
@@ -209,11 +214,10 @@ def forward_before_send(forward_fn):
         )
         if residual is not ...:
             hidden_states, residual = output
-            pp_send(hidden_states)
-            pp_send(residual)
+            pp_send_tensors([hidden_states, residual])
         else:
             hidden_states = output
-            pp_send(hidden_states)
+            pp_send_tensors([hidden_states])
         return output
 
     forward_before_send_fn.__wrapped_by_forward_before_send__ = True
@@ -299,8 +303,7 @@ class DecoderModel(nn.Module, metaclass=PPInitCaller):
         assert num_hidden_layers >= mapping.pp_size, f"{num_hidden_layers} layers are not enough for PP{mapping.pp_size}"
         pp_layer_list = mapping.pp_layers(num_hidden_layers)
         has_pp_layer = len(pp_layer_list) > 0
-        for layer_idx in range(num_hidden_layers):
-            layer = self.layers[layer_idx]
+        for layer_idx, layer in enumerate(self.layers):
             is_last_layer = (layer_idx == num_hidden_layers - 1)
             if layer_idx not in pp_layer_list:
                 # keep next layer's input_layernorm's weights for fusion
@@ -381,6 +384,7 @@ class DecoderModelForCausalLM(nn.Module,
                 mapping=config.mapping,
                 tensor_parallel_mode=TensorParallelMode.COLUMN,
                 gather_output=True,
+                reduce_output=False,
                 use_custom_cublas_mm=getattr(model, 'use_custom_cublas_mm',
                                              False),
             )
@@ -559,6 +563,7 @@ class DecoderModelForCausalLM(nn.Module,
                      weights: Dict,
                      weight_mapper: Optional["BaseWeightMapper"] = None,
                      skip_modules: List[str] = [],
+                     params_map: Optional[Dict[str, str]] = None,
                      allow_partial_loading: bool = False):
         # TODO smor- this solution is a temporary solution to load weights while we are still using
         # the old checkpoint format loading process. Once checkpoint format is unified
@@ -568,6 +573,7 @@ class DecoderModelForCausalLM(nn.Module,
             _load_weights_impl(self,
                                weights,
                                skip_modules,
+                               params_map=params_map,
                                preload_weight_modules=preload_weight_modules,
                                allow_partial_loading=allow_partial_loading)
         else:
@@ -575,6 +581,7 @@ class DecoderModelForCausalLM(nn.Module,
                                   weights,
                                   weight_mapper,
                                   skip_modules,
+                                  params_map=params_map,
                                   preload_weight_modules=preload_weight_modules,
                                   allow_partial_loading=allow_partial_loading)
 
@@ -847,8 +854,10 @@ def _load_weights_impl(model: Union[nn.Module, DecoderModelForCausalLM],
         'qkv_proj': ['q_proj', 'k_proj', 'v_proj'],
         'gate_up_proj': ['gate_proj', 'up_proj']
     }
+    device_id = local_mpi_rank()
 
     def load_single_module(name, module):
+        torch.cuda.set_device(device_id)
         if len(module._parameters) > 0:
             # skip load weights if module is in skip_modules
             if any(skip_module in name for skip_module in skip_modules):
@@ -868,6 +877,17 @@ def _load_weights_impl(model: Union[nn.Module, DecoderModelForCausalLM],
                 return
 
             names = name.split('.')
+
+            # Special case: ConfigurableMoE.backend (TRTLLMGenFusedMoE)
+            # Currently saved MoE weights don't include 'backend' in their names.
+            # After MoE refactoring, ConfigurableMoE now has a backend submodule,
+            # and weights loading is done in the backend, so module name includes '.backend'.
+            # We need to use parent module name (without .backend) to match saved weight names.
+            # After MoE refactoring is fully complete, all paths will follow this branch.
+            if names[-1] == "backend" and isinstance(module, MoE):
+                name = '.'.join(names[:-1])
+                names = name.split('.')
+
             # WAR: better solution is that llama has its own load_weights function.
             if names[-1] == 'next_layer_layernorm':
                 return
@@ -915,7 +935,7 @@ def _load_weights_impl(model: Union[nn.Module, DecoderModelForCausalLM],
                                 p.data.copy_(module_weights[n][:])
 
     if os.environ.get("TRT_LLM_DISABLE_LOAD_WEIGHTS_IN_PARALLEL",
-                      "True") in ["True", "true", "1", "yes", "y"]:
+                      "False") in ["True", "true", "1", "yes", "y"]:
         for name, module in tqdm(list(
                 model.named_modules(remove_duplicate=False)),
                                  desc="Loading weights"):
@@ -961,13 +981,26 @@ def _load_weights_impl_v2(model: Union[nn.Module, DecoderModelForCausalLM],
     if params_map is not None:
         weights = weight_mapper.rename_by_params_map(params_map, weights)
         logger.info(f"Renamed weights with params_map: {params_map}")
+    device_id = local_mpi_rank()
 
     def load_single_module(name, module):
+        torch.cuda.set_device(device_id)
         if len(module._parameters) > 0:
             if weight_mapper.should_skip_module(name):
                 return
 
             names = name.split('.')
+
+            # Special case: ConfigurableMoE.backend (TRTLLMGenFusedMoE)
+            # Currently saved MoE weights don't include 'backend' in their names.
+            # After MoE refactoring, ConfigurableMoE now has a backend submodule,
+            # and weights loading is done in the backend, so module name includes '.backend'.
+            # We need to use parent module name (without .backend) to match saved weight names.
+            # After MoE refactoring is fully complete, all paths will follow this branch.
+            if names[-1] == "backend" and isinstance(module, MoE):
+                name = '.'.join(names[:-1])
+                names = name.split('.')
+
             module_names_breakdown, module_name = names[:-1], names[-1]
 
             if weight_mapper.does_require_special_handling(module_name):
@@ -1007,7 +1040,7 @@ def _load_weights_impl_v2(model: Union[nn.Module, DecoderModelForCausalLM],
                                 allow_partial_loading=allow_partial_loading)
 
     if os.environ.get("TRT_LLM_DISABLE_LOAD_WEIGHTS_IN_PARALLEL",
-                      "True") in ["True", "true", "1", "yes", "y"]:
+                      "False") in ["True", "true", "1", "yes", "y"]:
         for name, module in tqdm(list(
                 model.named_modules(remove_duplicate=False)),
                                  desc="Loading weights"):

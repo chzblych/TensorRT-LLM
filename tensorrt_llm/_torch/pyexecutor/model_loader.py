@@ -6,8 +6,8 @@ from typing import Callable, Optional, Tuple
 
 import torch
 
-from tensorrt_llm._torch.models.checkpoints.base_checkpoint_loader import \
-    BaseCheckpointLoader
+from tensorrt_llm._torch.models.checkpoints.base_checkpoint_loader import (
+    AutoCheckpointMapper, BaseCheckpointLoader)
 from tensorrt_llm._utils import str_dtype_to_torch
 from tensorrt_llm.llmapi.llm_args import TorchLlmArgs
 from tensorrt_llm.logger import logger
@@ -256,6 +256,9 @@ class ModelLoader:
                     f"Fallback to regular model init: {traceback.format_exc(limit=10)}\n"
                 )
                 model = AutoModelForCausalLM.from_config(config)
+            finally:
+                if 'memo' in locals():
+                    del memo
 
             model.to("cuda")
             rank_model_storage = get_rank_model_storage(model)
@@ -265,9 +268,10 @@ class ModelLoader:
             if load_format == LoadFormat.AUTO:
                 if hasattr(model, 'llm_checkpoint_dir'):
                     weights = checkpoint_loader.load_weights(
-                        model.llm_checkpoint_dir)
+                        model.llm_checkpoint_dir, mapping=self.mapping)
                 else:
-                    weights = checkpoint_loader.load_weights(checkpoint_dir)
+                    weights = checkpoint_loader.load_weights(
+                        checkpoint_dir, mapping=self.mapping)
 
                 self.weight_mapper = checkpoint_loader.get_initialized_weight_mapper(
                     model, config)
@@ -277,9 +281,18 @@ class ModelLoader:
                 if self.spec_config is not None and self.spec_config.spec_dec_mode.need_load_draft_weights(
                 ):
                     weights = checkpoint_loader.load_weights(
-                        self.spec_config.speculative_model_dir)
+                        self.spec_config.speculative_model,
+                        mapping=self.mapping)
+
+                    draft_model_arch = model.draft_config.pretrained_config.architectures[
+                        0]
+                    draft_weight_mapper = AutoCheckpointMapper.get(
+                        checkpoint_loader.checkpoint_format, draft_model_arch)
+                    draft_weight_mapper.init_model_and_config(
+                        model.draft_model, model.draft_config)
+
                     self._call_load_weights(model.load_draft_weights, weights,
-                                            self.weight_mapper)
+                                            draft_weight_mapper)
 
             elif load_format == LoadFormat.DUMMY:
                 self.weight_mapper = checkpoint_loader.get_initialized_weight_mapper(
@@ -328,8 +341,8 @@ class ModelLoader:
             self, checkpoint_dir: str,
             checkpoint_loader: BaseCheckpointLoader) -> ModelConfig:
         """Loads and validates the model configuration."""
-        config = checkpoint_loader.load_config(
-            checkpoint_dir,
+        load_config_kwargs = dict(
+            checkpoint_dir=checkpoint_dir,
             trust_remote_code=True,
             mapping=self.mapping,
             enable_min_latency=self.llm_args.enable_min_latency,
@@ -349,7 +362,19 @@ class ModelLoader:
             moe_disable_finalize_fusion=self.llm_args.moe_config.
             disable_finalize_fusion,
             use_low_precision_moe_combine=self.llm_args.moe_config.
-            use_low_precision_moe_combine)
+            use_low_precision_moe_combine,
+            nvfp4_gemm_allowed_backends=self.llm_args.nvfp4_gemm_config.
+            allowed_backends)
+
+        # Only pass model_kwargs if it's explicitly set (not None)
+        if self.llm_args.model_kwargs is not None:
+            load_config_kwargs['model_kwargs'] = self.llm_args.model_kwargs
+
+        config = checkpoint_loader.load_config(**load_config_kwargs)
+
+        # Store nvfp4 config in extra_attrs for Linear layer access
+        config.extra_attrs[
+            'nvfp4_gemm_allowed_backends'] = config.nvfp4_gemm_allowed_backends
 
         validate_and_set_kv_cache_quant(config,
                                         self.llm_args.kv_cache_config.dtype)
@@ -357,9 +382,13 @@ class ModelLoader:
             config, self.llm_args.kv_cache_config.mamba_ssm_cache_dtype)
 
         # Allow overriding the number of layers via environment variable
+        # Note: This is kept for backward compatibility, but model_kwargs is preferred
         num_layers_override = int(os.environ.get("TLLM_OVERRIDE_LAYER_NUM",
                                                  "0"))
         if num_layers_override > 0:
+            logger.warning(
+                f"TLLM_OVERRIDE_LAYER_NUM is deprecated. Use model_kwargs instead: "
+                f"model_kwargs={{'num_hidden_layers': {num_layers_override}}}")
             config.pretrained_config.num_hidden_layers = num_layers_override
             for sub_config in ["text_config", "vision_config"]:
                 if hasattr(config.pretrained_config, sub_config):

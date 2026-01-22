@@ -3,21 +3,19 @@ from typing import TYPE_CHECKING, List, Optional
 
 import torch
 import torch.nn.functional as F
-from torch import nn
 
 from tensorrt_llm.mapping import Mapping
 
 from ..attention_backend import AttentionMetadata
 from ..distributed.ops import allgather
 from ..model_config import ModelConfig
-from ..pyexecutor.guided_decoder import CapturableGuidedDecoder
 from ..pyexecutor.llm_request import LlmRequest, LlmRequestState
 from ..pyexecutor.resource_manager import BaseResourceManager, SlotManager
-from ..pyexecutor.sampler import (BEAM, MAX_BEAM_WIDTH, SampleState,
+from ..pyexecutor.sampler import (DEFAULT_BEAM_IDX, SampleState,
                                   SampleStateTensors, TorchSampler, add_token,
                                   int_tensor)
 from ..pyexecutor.scheduler import ScheduledRequests
-from .interface import SpecMetadata, get_force_num_accepted_tokens
+from .interface import SpecMetadata, SpecWorkerBase
 
 if TYPE_CHECKING:
     from tensorrt_llm.llmapi.llm_args import MTPDecodingConfig
@@ -217,7 +215,7 @@ class MTPSampler(TorchSampler):
 
     SampleState = SampleStateMTP
 
-    @dataclass(frozen=True, kw_only=True)
+    @dataclass(kw_only=True)
     class Store(TorchSampler.Store):
         new_tokens: torch.Tensor
         next_new_tokens: torch.Tensor
@@ -236,10 +234,13 @@ class MTPSampler(TorchSampler):
 
         seq_slots = args.max_num_sequences
         max_tokens = args.max_total_draft_tokens + 1
+        self.max_beam_width = args.max_beam_width
+        assert self.max_beam_width == 1, "beam width must be 1 for MTP"
 
         self.store = self.Store(
-            new_tokens=int_tensor((max_tokens, seq_slots, MAX_BEAM_WIDTH)),
-            next_new_tokens=int_tensor((max_tokens, seq_slots, MAX_BEAM_WIDTH)),
+            new_tokens=int_tensor((max_tokens, seq_slots, self.max_beam_width)),
+            next_new_tokens=int_tensor(
+                (max_tokens, seq_slots, self.max_beam_width)),
             next_draft_tokens=int_tensor(
                 (seq_slots, args.max_total_draft_tokens)),
             new_tokens_lens=int_tensor((seq_slots, )),
@@ -266,14 +267,15 @@ class MTPSampler(TorchSampler):
         new_tokens = state.host.new_tokens.tolist()
         new_tokens_lens_list = state.host.new_tokens_lens.tolist()
         next_draft_tokens_list = state.host.next_draft_tokens.tolist()
-        beam_idx = BEAM
+        beam_idx = DEFAULT_BEAM_IDX
         for req in state.scheduled_requests.context_requests:
             if req.state == LlmRequestState.GENERATION_COMPLETE or req.context_remaining_length != 0:
                 continue
-            new_token = add_token(req, new_tokens, beam=beam_idx)
+            new_token = add_token(req, new_tokens, beam_idx=beam_idx)
             TorchSampler._handle_stop_criteria(req,
                                                new_token,
-                                               max_seq_len=self.max_seq_len)
+                                               max_seq_len=self.max_seq_len,
+                                               beam_idx=beam_idx)
             self._request_common_handling(req, next_draft_tokens_list)
 
         for req in state.scheduled_requests.generation_requests:
@@ -281,9 +283,15 @@ class MTPSampler(TorchSampler):
                 continue
             num_new_tokens = new_tokens_lens_list[req.py_seq_slot]
             for i in range(num_new_tokens):
-                new_token = add_token(req, new_tokens, beam=beam_idx, step=i)
+                new_token = add_token(req,
+                                      new_tokens,
+                                      beam_idx=beam_idx,
+                                      step=i)
                 if TorchSampler._handle_stop_criteria(
-                        req, new_token, max_seq_len=self.max_seq_len):
+                        req,
+                        new_token,
+                        max_seq_len=self.max_seq_len,
+                        beam_idx=beam_idx):
                     break
             req.py_num_accepted_draft_tokens = num_new_tokens - 1
             req.py_rewind_len = self.draft_len - req.py_num_accepted_draft_tokens
@@ -339,15 +347,17 @@ class MTPSampler(TorchSampler):
                               sampler_event=sampler_event)
 
 
-class MTPWorker(nn.Module):
+class MTPWorker(SpecWorkerBase):
 
     def __init__(self, spec_config: "MTPDecodingConfig", model_config=None):
         super().__init__()
         self.spec_config = spec_config
         self.model_config = model_config
         self.is_thop = False
-        self.guided_decoder: Optional[CapturableGuidedDecoder] = None
-        self.force_num_accepted_tokens = get_force_num_accepted_tokens()
+
+    @property
+    def max_draft_len(self) -> int:
+        return self.spec_config.num_nextn_predict_layers
 
     def forward(
         self,
@@ -407,20 +417,20 @@ class MTPWorker(nn.Module):
                 - KV cache: (ABCD) + EFGH (H's KV cache is invalid)
                 - hidden states: H_E, H_F, H_G, H_H (H_H is invalid)
             Draft model:
-                MPT1:
+                MTP1:
                     # For generation request, `mtp_num_modules` of tokens will be used as input.
                     - input tokens: FGX
                     - input hidden states: H_E, H_F, H_G
                     - KV cache: (BCDE) + FGX
                     - output hidden states: h_F, h_G, h_X
                     - output next draft token: N
-                MPT2:
+                MTP2:
                     - input tokens: GXN
                     - input hidden states: H_F, H_G, h_X
                     - KV cache: (CDEF) + GXN
                     - output hidden states: h_G, h_X, h_N
                     - output next draft token: O
-                MPT3:
+                MTP3:
                     - input tokens: XNO
                     - input hidden states: H_G, H_X, h_N
                     - KV cache: (DEFG) + XNO
@@ -463,8 +473,7 @@ class MTPWorker(nn.Module):
 
         raw_logits = logits
 
-        if self.guided_decoder is not None:
-            self.guided_decoder.execute(logits)
+        self._execute_guided_decoder_if_present(logits)
 
         # Sample and verify draft tokens
         accepted_tokens, num_accepted_tokens = self.sample_and_accept_draft_tokens(
@@ -531,49 +540,15 @@ class MTPWorker(nn.Module):
 
         # restore attn metadata
         if attn_metadata is not None:
-            self.restore_attn_metadata(attn_metadata=attn_metadata)
+            self._restore_attn_metadata_from_spec_dec(attn_metadata)
 
         # prepare next new tokens to support overlap scheduler
-        next_new_tokens = accepted_tokens[
-            spec_metadata.batch_indices_cuda[:batch_size],
-            num_accepted_tokens - 1].unsqueeze(1)
-        next_new_tokens = torch.concat([next_new_tokens, next_draft_tokens],
-                                       dim=1)
+        next_new_tokens = self._prepare_next_new_tokens(
+            accepted_tokens, next_draft_tokens,
+            spec_metadata.batch_indices_cuda, batch_size, num_accepted_tokens)
 
         return {
             'logits': raw_logits,
-            'new_tokens': accepted_tokens,
-            'new_tokens_lens': num_accepted_tokens,
-            'next_draft_tokens': next_draft_tokens,
-            'next_new_tokens': next_new_tokens
-        }
-
-    def skip_forward(
-        self,
-        input_ids,
-        position_ids,
-        hidden_states,
-        logits,
-        attn_metadata,
-        spec_metadata,
-        draft_model,
-    ):
-        batch_size = attn_metadata.num_seqs
-        mtp_num_modules = self.spec_config.num_nextn_predict_layers
-        accepted_tokens = torch.empty((batch_size, (mtp_num_modules + 1)),
-                                      dtype=torch.int,
-                                      device=logits.device)
-        num_accepted_tokens = torch.ones(batch_size,
-                                         dtype=torch.int,
-                                         device=logits.device)
-        next_draft_tokens = torch.empty((batch_size, mtp_num_modules),
-                                        dtype=torch.int,
-                                        device=logits.device)
-        next_new_tokens = torch.empty((batch_size, (mtp_num_modules + 1)),
-                                      dtype=torch.int,
-                                      device=logits.device)
-        return {
-            'logits': logits,
             'new_tokens': accepted_tokens,
             'new_tokens_lens': num_accepted_tokens,
             'next_draft_tokens': next_draft_tokens,
@@ -867,6 +842,10 @@ class MTPWorker(nn.Module):
                 self.spec_config.begin_thinking_phase_token,
                 self.spec_config.end_thinking_phase_token)
 
+            # Apply force override for relaxed acceptance path
+            num_accepted_tokens = self._apply_force_accepted_tokens(
+                num_accepted_tokens, num_contexts)
+
         # Strict acceptance
         else:
             if self.is_thop:
@@ -878,35 +857,25 @@ class MTPWorker(nn.Module):
                 accepted_tokens, num_accepted_tokens = torch.ops.trtllm.mtp_sampling_and_accepted_draft_tokens_op(
                     logits, spec_metadata.draft_tokens, target_tokens_cache,
                     mtp_num_modules, batch_size, num_contexts, logits.shape[-1])
+
+                # Apply force override for THOP path
+                num_accepted_tokens = self._apply_force_accepted_tokens(
+                    num_accepted_tokens, num_contexts)
             else:
-                # Do greedy sampling for the input logits
-                target_tokens = torch.argmax(logits, dim=-1)
-
-                # context
-                accepted_tokens[:num_contexts, 0] = target_tokens[:num_contexts]
-
-                # generation
-                gen_target_tokens = target_tokens[num_contexts:].reshape(
-                    num_gens, mtp_num_modules + 1)
-                accepted_tokens[num_contexts:, :] = gen_target_tokens
+                # Reshape draft tokens for base implementation
                 draft_tokens = spec_metadata.draft_tokens.reshape(
                     num_gens, mtp_num_modules)
-                num_accepted_tokens[num_contexts:] += torch.cumprod(
-                    (draft_tokens == gen_target_tokens[:, :mtp_num_modules]
-                     ).int(),
-                    dim=-1).sum(1)
 
-        # Check for environment variable override
-        if self.force_num_accepted_tokens != 0:
-            force_num_accepted_tokens = min(self.force_num_accepted_tokens,
-                                            mtp_num_modules + 1)
-            num_accepted_tokens[num_contexts:] = force_num_accepted_tokens
+                # Use base implementation for strict acceptance
+                accepted_tokens, num_accepted_tokens = self._sample_and_accept_draft_tokens_base(
+                    logits, draft_tokens, num_contexts, batch_size,
+                    spec_metadata)
 
         return accepted_tokens, num_accepted_tokens
 
     def change_attn_metadata(self, num_accepted_tokens: torch.Tensor,
                              attn_metadata: AttentionMetadata):
-        attn_metadata.prepare_for_spec_dec("_seq_lens", "_seq_lens_cuda")
+        self._prepare_attn_metadata_for_spec_dec(attn_metadata)
         batch_size = attn_metadata.num_seqs
         mtp_num_modules = self.spec_config.num_nextn_predict_layers
 
@@ -928,10 +897,6 @@ class MTPWorker(nn.Module):
                 # used for vanilla MLA, list on cpu
                 attn_metadata.kv_cache_params.num_cached_tokens_per_seq[
                     i] -= mtp_num_modules + 1 - num_accepted_tokens[i].item()
-
-    def restore_attn_metadata(self, attn_metadata: AttentionMetadata):
-        attn_metadata.restore_from_spec_dec()
-        attn_metadata.on_update()
 
     def prepare_drafter_inputs(
         self,
@@ -1036,13 +1001,9 @@ class MTPWorker(nn.Module):
             # context
             if num_contexts > 0:
                 hidden_states_ctx = hidden_states[:num_ctx_tokens, :]
-                input_prompt_ids = input_ids[:num_ctx_tokens]
-                input_ids_ctx = torch.empty_like(input_prompt_ids,
-                                                 dtype=torch.int32,
-                                                 device="cuda")
-                input_ids_ctx[:-1].copy_(input_prompt_ids[1:])
-                input_ids_ctx[last_tokens_idx[:num_contexts]] = \
-                    accepted_tokens[:num_contexts, 0]
+                input_ids_ctx = self._prepare_context_input_ids(
+                    input_ids, num_ctx_tokens, last_tokens_idx, accepted_tokens,
+                    num_contexts)
                 return_input_ids_list.append(input_ids_ctx)
                 return_hidden_states_list.append(hidden_states_ctx)
             # generation
@@ -1158,14 +1119,9 @@ class MTPWorker(nn.Module):
             draft_tokens = self.get_draft_tokens_from_gathered(sliced_gathered)
         else:
             # Simple argmax if no TP or no model config
-            draft_tokens = torch.argmax(logits, dim=-1).type(torch.int32)
+            draft_tokens = self._draft_sampler_greedy(logits)
 
         return draft_tokens
-
-    def set_guided_decoder(self,
-                           guided_decoder: CapturableGuidedDecoder) -> bool:
-        self.guided_decoder = guided_decoder
-        return True
 
 
 class MTPEagleWorker(MTPWorker):
@@ -1202,15 +1158,14 @@ class MTPEagleWorker(MTPWorker):
 
         raw_logits = logits
 
-        if self.guided_decoder is not None:
-            self.guided_decoder.execute(logits)
+        self._execute_guided_decoder_if_present(logits)
 
         # Sample and verify draft tokens
         accepted_tokens, num_accepted_tokens = self.sample_and_accept_draft_tokens(
             input_ids, logits, spec_metadata, attn_metadata)
 
         # Save the old attn_metadata and spec_metadata
-        attn_metadata.prepare_for_spec_dec("_seq_lens", "_seq_lens_cuda")
+        self._prepare_attn_metadata_for_spec_dec(attn_metadata)
 
         # Prepare inputs for the 1st MTP layer
         @torch.compile(options={"max-autotune": True})
@@ -1349,22 +1304,9 @@ class MTPEagleWorker(MTPWorker):
             }
 
         # restore attn_metadata to support cuda graph
-        attn_metadata.restore_from_spec_dec()
-        attn_metadata.on_update()
+        self._restore_attn_metadata_from_spec_dec(attn_metadata)
 
-        @torch.compile(options={"max-autotune": True})
-        def prepare_next_tokens(next_draft_tokens, accepted_tokens,
-                                spec_metadata, batch_size, num_accepted_tokens):
-            next_draft_tokens = torch.stack(next_draft_tokens, dim=1)
-            # prepare next new tokens to support overlap scheduler
-            next_new_tokens = accepted_tokens[
-                spec_metadata.batch_indices_cuda[:batch_size],
-                num_accepted_tokens - 1].unsqueeze(1)
-            next_new_tokens = torch.concat([next_new_tokens, next_draft_tokens],
-                                           dim=1)
-            return next_draft_tokens, next_new_tokens
-
-        next_draft_tokens, next_new_tokens = prepare_next_tokens(
+        next_draft_tokens, next_new_tokens = self._prepare_next_tokens(
             next_draft_tokens, accepted_tokens, spec_metadata, batch_size,
             num_accepted_tokens)
 
@@ -1375,6 +1317,18 @@ class MTPEagleWorker(MTPWorker):
             'next_draft_tokens': next_draft_tokens,
             'next_new_tokens': next_new_tokens
         }
+
+    @torch.compile(options={"max-autotune": True})
+    def _prepare_next_tokens(self, next_draft_tokens, accepted_tokens,
+                             spec_metadata, batch_size, num_accepted_tokens):
+        """
+        Stack draft tokens and prepare next_new_tokens for overlap scheduler.
+        """
+        next_draft_tokens = torch.stack(next_draft_tokens, dim=1)
+        next_new_tokens = self._prepare_next_new_tokens(
+            accepted_tokens, next_draft_tokens,
+            spec_metadata.batch_indices_cuda, batch_size, num_accepted_tokens)
+        return next_draft_tokens, next_new_tokens
 
     @torch.compile(options={"max-autotune": True})
     def prepare_drafter_inputs(
@@ -1390,13 +1344,9 @@ class MTPEagleWorker(MTPWorker):
         num_contexts = attn_metadata.num_contexts
 
         # context
-        input_prompt_ids = input_ids[:attn_metadata.num_ctx_tokens]
-        input_ids_ctx = torch.empty_like(input_prompt_ids,
-                                         dtype=torch.int32,
-                                         device="cuda")
-        input_ids_ctx[:-1].copy_(input_prompt_ids[1:])
-        input_ids_ctx[
-            last_tokens_idx[:num_contexts]] = accepted_tokens[:num_contexts, 0]
+        input_ids_ctx = self._prepare_context_input_ids(
+            input_ids, attn_metadata.num_ctx_tokens, last_tokens_idx,
+            accepted_tokens, num_contexts)
 
         # generation
         input_ids_gen = accepted_tokens[num_contexts:, :].flatten()
