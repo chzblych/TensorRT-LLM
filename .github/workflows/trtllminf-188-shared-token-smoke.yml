@@ -1,0 +1,101 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: TRTLLMINF-188 Shared Token Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Enter TRTLLMINF-188-SHARED-TOKEN-SMOKE
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trtllminf-188-shared-token-smoke
+  cancel-in-progress: false
+
+jobs:
+  shared-token-membership-smoke:
+    if: github.repository == 'chzblych/TensorRT-LLM'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      EXPECTED_REPOSITORY: chzblych/TensorRT-LLM
+      EXPECTED_ACTOR: chzblych
+      EXPECTED_ORG: NVIDIA
+      EXPECTED_TEAM: trt-llm-ci-approvers
+
+    steps:
+      - name: Validate fork-only dispatch scope
+        shell: bash
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          DISPATCH_ACTOR: ${{ github.actor }}
+          DISPATCH_REF: ${{ github.ref }}
+          DISPATCH_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          [[ "$CONFIRMATION" == "TRTLLMINF-188-SHARED-TOKEN-SMOKE" ]]
+          [[ "$DISPATCH_REPOSITORY" == "$EXPECTED_REPOSITORY" ]]
+          [[ "$DISPATCH_ACTOR" == "$EXPECTED_ACTOR" ]]
+          [[ "$DISPATCH_REF" == "refs/heads/main" ]]
+
+      - name: Verify shared token can read active Team membership
+        id: membership
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ secrets.TRTLLM_AGENT_SHARED_TOKEN }}
+          result-encoding: string
+          script: |
+            const actor = context.actor;
+            if (actor !== process.env.EXPECTED_ACTOR) {
+              throw new Error('Unexpected workflow actor: ' + actor);
+            }
+
+            const response = await github.request(
+              'GET /orgs/{org}/teams/{team_slug}/memberships/{username}',
+              {
+                org: process.env.EXPECTED_ORG,
+                team_slug: process.env.EXPECTED_TEAM,
+                username: actor,
+              }
+            );
+
+            if (response.status !== 200 || response.data.state !== 'active') {
+              throw new Error(
+                'Expected an active Team membership; status=' +
+                  response.status + ', state=' + response.data.state
+              );
+            }
+
+            core.info(
+              'TRTLLM_AGENT_SHARED_TOKEN verified active membership for ' +
+                actor + ' in ' + process.env.EXPECTED_ORG + '/' +
+                process.env.EXPECTED_TEAM + '.'
+            );
+            await core.summary
+              .addHeading('TRTLLMINF-188 shared token smoke')
+              .addList([
+                'Repository: ' + context.repo.owner + '/' + context.repo.repo,
+                'Actor: ' + actor,
+                'Team: ' + process.env.EXPECTED_ORG + '/' + process.env.EXPECTED_TEAM,
+                'Membership API status: ' + response.status,
+                'Membership state: ' + response.data.state,
+                'Secret value was not printed or persisted.',
+              ])
+              .write();
+
+            return response.data.state;
+
+      - name: Assert sanitized result
+        shell: bash
+        env:
+          MEMBERSHIP_STATE: ${{ steps.membership.outputs.result }}
+        run: |
+          set -euo pipefail
+          [[ "$MEMBERSHIP_STATE" == "active" ]]
+          echo "TRTLLM_AGENT_SHARED_TOKEN_ACTIVE_MEMBERSHIP_OK=1"
