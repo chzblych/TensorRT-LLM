@@ -11,8 +11,7 @@ on:
         required: true
         type: string
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: trtllminf-188-shared-token-smoke
@@ -46,7 +45,7 @@ jobs:
 
       - name: Verify shared token can read active Team membership
         id: membership
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
           github-token: ${{ secrets.TRTLLM_AGENT_SHARED_TOKEN }}
           result-encoding: string
