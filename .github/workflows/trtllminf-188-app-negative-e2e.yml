@@ -205,7 +205,9 @@ jobs:
               --arg label "$APPROVAL_LABEL" --arg actor "$EXPECTED_ACTOR" \
               --arg app_slug "$APP_SLUG" --arg since "$MUTATION_AT" \
               '[.[] | select(.event == "labeled" and .label.name == $label and
-                 .actor.login == $actor and .performed_via_github_app.slug == $app_slug and
+                 .actor.login == $actor and .actor.type == "Bot" and
+                 (.performed_via_github_app == null or
+                  .performed_via_github_app.slug == $app_slug) and
                  .created_at >= $since)] | last // empty' \
               <<<"$events")"
             expected_comment_body="Removed the \"$APPROVAL_LABEL\" label because @$EXPECTED_ACTOR could not be verified as an active member of NVIDIA/trt-llm-ci-approvers. Ask a member of that team to apply it."
@@ -218,7 +220,7 @@ jobs:
               --arg actor "$EXPECTED_ACTOR" --arg since "$MUTATION_AT" \
               --arg head_sha "$EXPECTED_HEAD_SHA" --arg head_branch "$EXPECTED_HEAD_BRANCH" \
               '[.workflow_runs[] | select(.name == "Guard Post-Merge Approval Label" and
-                 .event == "pull_request_target" and .actor.login == $actor and
+                 .event == "pull_request_target" and .actor.login == $actor and .actor.type == "Bot" and
                  (.path == ".github/workflows/post-merge-approval.yml" or
                   .path == ".github/workflows/post-merge-approval.yml@main") and
                  .head_sha == $head_sha and .head_branch == $head_branch and
@@ -247,7 +249,7 @@ jobs:
           jq --arg label "$APPROVAL_LABEL" \
             '{number,state,html_url,labels:[.labels[].name],approval_label_present:([.labels[].name] | index($label) != null)}' \
             <<<"$issue" > "$AUDIT_DIR/pr-after.json"
-          jq '[.[] | {id,event,actor:.actor.login,label:.label.name,created_at,performed_via_github_app:.performed_via_github_app.slug}]' \
+          jq '[.[] | {id,event,actor:.actor.login,actor_type:.actor.type,label:.label.name,created_at,performed_via_github_app:.performed_via_github_app.slug}]' \
             <<<"$events" > "$AUDIT_DIR/issue-events.json"
           jq --arg body "$expected_comment_body" --arg since "$MUTATION_AT" \
             '[.[] | select(.created_at >= $since and .user.login == "github-actions[bot]" and .body == $body) |
@@ -260,7 +262,7 @@ jobs:
               (.path == ".github/workflows/post-merge-approval.yml" or
                .path == ".github/workflows/post-merge-approval.yml@main") and
               .head_sha == $head_sha and .head_branch == $head_branch and .created_at >= $since) |
-              {id,name,path,event,status,conclusion,actor:.actor.login,head_branch,head_sha,run_number,created_at,updated_at,html_url}]' \
+              {id,name,path,event,status,conclusion,actor:.actor.login,actor_type:.actor.type,head_branch,head_sha,run_number,created_at,updated_at,html_url}]' \
             <<<"$runs" > "$AUDIT_DIR/guard-runs.json"
 
           [[ "$verified" == "true" ]]
