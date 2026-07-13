@@ -1,0 +1,356 @@
+name: TRTLLMINF-188 GitHub App Negative E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Owned isolated test PR number
+        required: true
+        type: string
+      expected_head_sha:
+        description: Exact 40-character head SHA of the owned test PR
+        required: true
+        type: string
+      expected_guard_sha256:
+        description: Exact SHA-256 of the staged fork guard workflow
+        required: true
+        type: string
+      confirmation:
+        description: Enter TRTLLMINF-188-NEGATIVE-E2E
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: trtllminf-188-negative-e2e
+  cancel-in-progress: false
+
+jobs:
+  negative-actor-regression:
+    if: github.repository == 'chzblych/TensorRT-LLM'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      EXPECTED_REPOSITORY: chzblych/TensorRT-LLM
+      EXPECTED_OWNER: chzblych
+      EXPECTED_REPOSITORY_NAME: TensorRT-LLM
+      EXPECTED_APP_SLUG: trtllm-ci-negative-e2e-chzblych
+      EXPECTED_PR_TITLE: "[TRTLLMINF-188][ci] Isolated approval workflow test"
+      EXPECTED_BRANCH_PREFIX: codex/trtllminf-188-workflow-test-
+      EXPECTED_MARKER_PATH: .github/TRTLLMINF-188-WORKFLOW-TEST.md
+      APPROVAL_LABEL: "ci: post-merge approved"
+      AUDIT_DIR: /tmp/trtllminf-188-negative-e2e
+
+    steps:
+      - name: Validate dispatch and immutable test target
+        id: preflight
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          EXPECTED_GUARD_SHA256: ${{ inputs.expected_guard_sha256 }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          DISPATCH_ACTOR: ${{ github.actor }}
+          DISPATCH_REF: ${{ github.ref }}
+          WORKFLOW_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$AUDIT_DIR"
+
+          [[ "$DISPATCH_ACTOR" == "$EXPECTED_OWNER" ]]
+          [[ "$DISPATCH_REF" == "refs/heads/main" ]]
+          [[ "$CONFIRMATION" == "TRTLLMINF-188-NEGATIVE-E2E" ]]
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          [[ "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_GUARD_SHA256" =~ ^[0-9a-f]{64}$ ]]
+
+          started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          printf '%s\n' "started_at=$started_at" >> "$GITHUB_OUTPUT"
+
+          jq -n \
+            --arg repository "$EXPECTED_REPOSITORY" \
+            --arg actor "$DISPATCH_ACTOR" \
+            --arg ref "$DISPATCH_REF" \
+            --arg workflow_sha "$WORKFLOW_SHA" \
+            --arg run_id "$RUN_ID" \
+            --arg started_at "$started_at" \
+            '{repository:$repository, actor:$actor, ref:$ref, workflow_sha:$workflow_sha, run_id:$run_id, started_at:$started_at}' \
+            > "$AUDIT_DIR/dispatch.json"
+
+          pr="$(gh api "/repos/$EXPECTED_REPOSITORY/pulls/$PR_NUMBER")"
+          head_branch="$(jq -r '.head.ref' <<<"$pr")"
+          printf '%s\n' "head_branch=$head_branch" >> "$GITHUB_OUTPUT"
+          jq -e \
+            --arg repository "$EXPECTED_REPOSITORY" \
+            --arg title "$EXPECTED_PR_TITLE" \
+            --arg branch_prefix "$EXPECTED_BRANCH_PREFIX" \
+            --arg head_sha "$EXPECTED_HEAD_SHA" \
+            --arg label "$APPROVAL_LABEL" \
+            '.state == "open" and .merged == false and .title == $title and
+             .base.ref == "main" and .base.repo.full_name == $repository and
+             .head.repo.full_name == $repository and
+             (.head.ref | startswith($branch_prefix)) and .head.sha == $head_sha and
+             ([.labels[].name] | index($label) == null)' \
+            <<<"$pr" >/dev/null
+          jq '{number,state,merged,title,html_url,base:{ref:.base.ref,sha:.base.sha,repo:.base.repo.full_name},head:{ref:.head.ref,sha:.head.sha,repo:.head.repo.full_name},labels:[.labels[].name]}' \
+            <<<"$pr" > "$AUDIT_DIR/pr-before.json"
+
+          files="$(gh api "/repos/$EXPECTED_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100")"
+          jq -e --arg marker "$EXPECTED_MARKER_PATH" \
+            'length == 1 and .[0].filename == $marker and .[0].status == "added"' \
+            <<<"$files" >/dev/null
+          jq '[.[] | {filename,status,additions,deletions,changes,sha}]' \
+            <<<"$files" > "$AUDIT_DIR/pr-files.json"
+
+          gh api "/repos/$EXPECTED_REPOSITORY/contents/.github/workflows/post-merge-approval.yml?ref=$WORKFLOW_SHA" \
+            --jq '.content' | tr -d '\n' | base64 --decode \
+            > "$AUDIT_DIR/tested-post-merge-approval.yml"
+          actual_guard_sha256="$(sha256sum "$AUDIT_DIR/tested-post-merge-approval.yml" | awk '{print $1}')"
+          [[ "$actual_guard_sha256" == "$EXPECTED_GUARD_SHA256" ]]
+          printf '%s\n' "$actual_guard_sha256  tested-post-merge-approval.yml" \
+            > "$AUDIT_DIR/guard-sha256.txt"
+
+      - name: Create repository-scoped GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.TRTLLM_CI_NEGATIVE_TEST_APP_CLIENT_ID }}
+          private-key: ${{ secrets.TRTLLM_CI_NEGATIVE_TEST_APP_PRIVATE_KEY }}
+          owner: ${{ env.EXPECTED_OWNER }}
+          repositories: ${{ env.EXPECTED_REPOSITORY_NAME }}
+          permission-pull-requests: write
+          skip-token-revoke: false
+
+      - name: Revalidate target and add approval label as App bot
+        id: mutate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$APP_SLUG" == "$EXPECTED_APP_SLUG" ]]
+          expected_actor="${APP_SLUG}[bot]"
+          printf '%s\n' "expected_actor=$expected_actor" >> "$GITHUB_OUTPUT"
+
+          pr="$(gh api "/repos/$EXPECTED_REPOSITORY/pulls/$PR_NUMBER")"
+          jq -e \
+            --arg repository "$EXPECTED_REPOSITORY" \
+            --arg title "$EXPECTED_PR_TITLE" \
+            --arg branch_prefix "$EXPECTED_BRANCH_PREFIX" \
+            --arg head_sha "$EXPECTED_HEAD_SHA" \
+            --arg label "$APPROVAL_LABEL" \
+            '.state == "open" and .merged == false and .title == $title and
+             .base.ref == "main" and .base.repo.full_name == $repository and
+             .head.repo.full_name == $repository and
+             (.head.ref | startswith($branch_prefix)) and .head.sha == $head_sha and
+             ([.labels[].name] | index($label) == null)' \
+            <<<"$pr" >/dev/null
+
+          current_main_sha="$(gh api "/repos/$EXPECTED_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          [[ "$current_main_sha" == "$WORKFLOW_SHA" ]]
+
+          mutation_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          printf '%s\n' "mutation_at=$mutation_at" >> "$GITHUB_OUTPUT"
+          label_response="$(
+            jq -n --arg label "$APPROVAL_LABEL" '{labels:[$label]}' |
+              GH_TOKEN="$APP_TOKEN" gh api --method POST "/repos/$EXPECTED_REPOSITORY/issues/$PR_NUMBER/labels" --input -
+          )"
+          jq -e --arg label "$APPROVAL_LABEL" '[.[].name] | index($label) != null' \
+            <<<"$label_response" >/dev/null
+          jq --arg actor "$expected_actor" --arg mutation_at "$mutation_at" \
+            '{expected_actor:$actor, mutation_at:$mutation_at, labels:[.[].name]}' \
+            <<<"$label_response" > "$AUDIT_DIR/label-response.json"
+
+      - name: Require bot actor evidence and successful guard cleanup
+        id: verify
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_ACTOR: ${{ steps.mutate.outputs.expected_actor }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          MUTATION_AT: ${{ steps.mutate.outputs.mutation_at }}
+          WORKFLOW_SHA: ${{ github.sha }}
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          EXPECTED_HEAD_BRANCH: ${{ steps.preflight.outputs.head_branch }}
+        run: |
+          set -euo pipefail
+          verified=false
+          event=''
+          comment=''
+          guard_run=''
+          issue=''
+          events='[]'
+          comments='[]'
+          runs='{"workflow_runs":[]}'
+
+          for _attempt in $(seq 1 60); do
+            issue="$(gh api "/repos/$EXPECTED_REPOSITORY/issues/$PR_NUMBER")"
+            events="$(gh api "/repos/$EXPECTED_REPOSITORY/issues/$PR_NUMBER/events?per_page=100")"
+            comments="$(gh api "/repos/$EXPECTED_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100")"
+            runs="$(gh api "/repos/$EXPECTED_REPOSITORY/actions/workflows/post-merge-approval.yml/runs?event=pull_request_target&per_page=100")"
+
+            event="$(jq -c \
+              --arg label "$APPROVAL_LABEL" --arg actor "$EXPECTED_ACTOR" \
+              --arg app_slug "$APP_SLUG" --arg since "$MUTATION_AT" \
+              '[.[] | select(.event == "labeled" and .label.name == $label and
+                 .actor.login == $actor and .performed_via_github_app.slug == $app_slug and
+                 .created_at >= $since)] | last // empty' \
+              <<<"$events")"
+            expected_comment_body="Removed the \"$APPROVAL_LABEL\" label because @$EXPECTED_ACTOR could not be verified as an active member of NVIDIA/trt-llm-ci-approvers. Ask a member of that team to apply it."
+            comment="$(jq -c \
+              --arg body "$expected_comment_body" --arg since "$MUTATION_AT" \
+              '[.[] | select(.created_at >= $since and .user.login == "github-actions[bot]" and
+                 .body == $body)] | last // empty' \
+              <<<"$comments")"
+            guard_run="$(jq -c \
+              --arg actor "$EXPECTED_ACTOR" --arg since "$MUTATION_AT" \
+              --arg head_sha "$EXPECTED_HEAD_SHA" --arg head_branch "$EXPECTED_HEAD_BRANCH" \
+              '[.workflow_runs[] | select(.name == "Guard Post-Merge Approval Label" and
+                 .event == "pull_request_target" and .actor.login == $actor and
+                 (.path == ".github/workflows/post-merge-approval.yml" or
+                  .path == ".github/workflows/post-merge-approval.yml@main") and
+                 .head_sha == $head_sha and .head_branch == $head_branch and
+                 .created_at >= $since)] | last // empty' \
+              <<<"$runs")"
+
+            label_present="$(jq --arg label "$APPROVAL_LABEL" \
+              '[.labels[].name] | index($label) != null' <<<"$issue")"
+            if [[ "$label_present" == "false" && -n "$event" && -n "$comment" && -n "$guard_run" ]]; then
+              run_status="$(jq -r '.status' <<<"$guard_run")"
+              run_conclusion="$(jq -r '.conclusion // ""' <<<"$guard_run")"
+              if [[ "$run_status" == "completed" && "$run_conclusion" == "success" ]]; then
+                current_main_sha="$(gh api "/repos/$EXPECTED_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+                if [[ "$current_main_sha" == "$WORKFLOW_SHA" ]]; then
+                  verified=true
+                  break
+                fi
+              fi
+              if [[ "$run_status" == "completed" && "$run_conclusion" != "success" ]]; then
+                break
+              fi
+            fi
+            sleep 5
+          done
+
+          jq --arg label "$APPROVAL_LABEL" \
+            '{number,state,html_url,labels:[.labels[].name],approval_label_present:([.labels[].name] | index($label) != null)}' \
+            <<<"$issue" > "$AUDIT_DIR/pr-after.json"
+          jq '[.[] | {id,event,actor:.actor.login,label:.label.name,created_at,performed_via_github_app:.performed_via_github_app.slug}]' \
+            <<<"$events" > "$AUDIT_DIR/issue-events.json"
+          jq --arg body "$expected_comment_body" --arg since "$MUTATION_AT" \
+            '[.[] | select(.created_at >= $since and .user.login == "github-actions[bot]" and .body == $body) |
+              {id,user:.user.login,body,created_at,html_url}]' \
+            <<<"$comments" > "$AUDIT_DIR/denial-comments.json"
+          jq --arg actor "$EXPECTED_ACTOR" --arg since "$MUTATION_AT" \
+            --arg head_sha "$EXPECTED_HEAD_SHA" --arg head_branch "$EXPECTED_HEAD_BRANCH" \
+            '[.workflow_runs[] | select(.name == "Guard Post-Merge Approval Label" and
+              .event == "pull_request_target" and .actor.login == $actor and
+              (.path == ".github/workflows/post-merge-approval.yml" or
+               .path == ".github/workflows/post-merge-approval.yml@main") and
+              .head_sha == $head_sha and .head_branch == $head_branch and .created_at >= $since) |
+              {id,name,path,event,status,conclusion,actor:.actor.login,head_branch,head_sha,run_number,created_at,updated_at,html_url}]' \
+            <<<"$runs" > "$AUDIT_DIR/guard-runs.json"
+
+          [[ "$verified" == "true" ]]
+          guard_run_id="$(jq -r '.id' <<<"$guard_run")"
+          event_id="$(jq -r '.id' <<<"$event")"
+          comment_id="$(jq -r '.id' <<<"$comment")"
+          gh api "/repos/$EXPECTED_REPOSITORY/actions/runs/$guard_run_id/jobs?per_page=100" \
+            | jq '{total_count,jobs:[.jobs[] | {id,name,status,conclusion,started_at,completed_at,html_url,steps:[.steps[] | {name,status,conclusion,number,started_at,completed_at}]}]}' \
+            > "$AUDIT_DIR/guard-jobs.json"
+          printf '%s\n' "guard_run_id=$guard_run_id" "event_id=$event_id" "comment_id=$comment_id" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Emergency-remove approval label if guard did not
+        id: emergency-cleanup
+        if: always() && steps.app-token.outcome == 'success'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$AUDIT_DIR"
+          labels="$(gh api "/repos/$EXPECTED_REPOSITORY/issues/$PR_NUMBER/labels?per_page=100")"
+          emergency_cleanup=false
+          delete_succeeded=false
+          if jq -e --arg label "$APPROVAL_LABEL" '[.[].name] | index($label) != null' \
+            <<<"$labels" >/dev/null; then
+            emergency_cleanup=true
+            if gh api --silent --method DELETE \
+              "/repos/$EXPECTED_REPOSITORY/issues/$PR_NUMBER/labels/ci%3A%20post-merge%20approved" \
+              2>/dev/null; then
+              delete_succeeded=true
+            fi
+          fi
+          labels_after="$(gh api "/repos/$EXPECTED_REPOSITORY/issues/$PR_NUMBER/labels?per_page=100")"
+          label_present_after="$(jq --arg label "$APPROVAL_LABEL" \
+            '[.[].name] | index($label) != null' <<<"$labels_after")"
+          [[ "$label_present_after" == "false" ]]
+          jq -n --argjson emergency_cleanup "$emergency_cleanup" \
+            --argjson delete_succeeded "$delete_succeeded" \
+            --argjson label_present_after "$label_present_after" \
+            '{emergency_cleanup:$emergency_cleanup,delete_succeeded:$delete_succeeded,label_present_after:$label_present_after}' \
+            > "$AUDIT_DIR/emergency-cleanup.json"
+
+      - name: Build and scan sanitized audit bundle
+        id: audit
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_ACTOR: ${{ steps.mutate.outputs.expected_actor }}
+          GUARD_RUN_ID: ${{ steps.verify.outputs.guard_run_id }}
+          EVENT_ID: ${{ steps.verify.outputs.event_id }}
+          COMMENT_ID: ${{ steps.verify.outputs.comment_id }}
+          PREFLIGHT_OUTCOME: ${{ steps.preflight.outcome }}
+          TOKEN_OUTCOME: ${{ steps.app-token.outcome }}
+          MUTATION_OUTCOME: ${{ steps.mutate.outcome }}
+          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+          CLEANUP_OUTCOME: ${{ steps.emergency-cleanup.outcome }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$AUDIT_DIR"
+          jq -n \
+            --arg expected_actor "$EXPECTED_ACTOR" \
+            --arg guard_run_id "$GUARD_RUN_ID" \
+            --arg event_id "$EVENT_ID" \
+            --arg comment_id "$COMMENT_ID" \
+            --arg preflight "$PREFLIGHT_OUTCOME" \
+            --arg token "$TOKEN_OUTCOME" \
+            --arg mutation "$MUTATION_OUTCOME" \
+            --arg verify "$VERIFY_OUTCOME" \
+            --arg cleanup "$CLEANUP_OUTCOME" \
+            '{expected_actor:$expected_actor, evidence:{guard_run_id:$guard_run_id,event_id:$event_id,comment_id:$comment_id},steps:{preflight:$preflight,token:$token,mutation:$mutation,verify:$verify,cleanup:$cleanup}}' \
+            > "$AUDIT_DIR/result.json"
+
+          if grep -R -q -E -- \
+            '-----BEGIN ([A-Z]+ )?PRIVATE KEY-----|github_pat_|gh[pousr]_[A-Za-z0-9]{20,}|Bearer[[:space:]]+[A-Za-z0-9._-]{20,}' \
+            "$AUDIT_DIR"; then
+            echo "Credential-pattern scan rejected the audit bundle." >&2
+            exit 1
+          fi
+          (cd "$AUDIT_DIR" && sha256sum * > SHA256SUMS)
+          printf '%s\n' 'safe=true' >> "$GITHUB_OUTPUT"
+
+      - name: Upload sanitized audit bundle
+        if: always() && steps.audit.outputs.safe == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: trtllminf-188-negative-e2e-${{ github.run_id }}
+          path: /tmp/trtllminf-188-negative-e2e
+          if-no-files-found: error
+          retention-days: 30
