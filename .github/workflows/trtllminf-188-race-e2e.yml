@@ -1,0 +1,984 @@
+name: TRTLLMINF-188 Manual Race E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: Race scenario to exercise
+        required: true
+        type: choice
+        options:
+          - stale-to-authorized
+          - same-actor-relabel
+      pr_number:
+        description: Owned isolated test PR number
+        required: true
+        type: string
+      expected_head_sha:
+        description: Exact 40-character head SHA of the owned test PR
+        required: true
+        type: string
+      expected_guard_sha256:
+        description: Exact SHA-256 of the staged fork race guard
+        required: true
+        type: string
+      expected_driver_sha256:
+        description: Exact SHA-256 of this default-branch driver
+        required: true
+        type: string
+      confirmation:
+        description: Enter TRTLLMINF-188-RACE-E2E
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: trtllminf-188-race-e2e-${{ inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  race-regression:
+    if: github.repository == 'chzblych/TensorRT-LLM'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      EXPECTED_REPOSITORY: chzblych/TensorRT-LLM
+      EXPECTED_OWNER: chzblych
+      EXPECTED_REPOSITORY_NAME: TensorRT-LLM
+      EXPECTED_APP_SLUG: trtllm-ci-negative-e2e-chzblych
+      EXPECTED_PR_TITLE: "[TRTLLMINF-188][ci] Isolated approval workflow test"
+      EXPECTED_BRANCH_PREFIX: codex/trtllminf-188-workflow-test-
+      EXPECTED_MARKER_PATH: .github/TRTLLMINF-188-WORKFLOW-TEST.md
+      GUARD_WORKFLOW_PATH: .github/workflows/post-merge-approval.yml
+      DRIVER_WORKFLOW_PATH: .github/workflows/trtllminf-188-race-e2e.yml
+      APPROVAL_LABEL: "ci: post-merge approved"
+      RACE_STEP: "TRTLLMINF-188 deterministic race window"
+      AUDIT_DIR: /tmp/trtllminf-188-race-e2e
+
+    steps:
+      - name: Validate dispatch and hash-locked test target
+        id: preflight
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SCENARIO: ${{ inputs.scenario }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          EXPECTED_GUARD_SHA256: ${{ inputs.expected_guard_sha256 }}
+          EXPECTED_DRIVER_SHA256: ${{ inputs.expected_driver_sha256 }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          DISPATCH_ACTOR: ${{ github.actor }}
+          DISPATCH_REF: ${{ github.ref }}
+          WORKFLOW_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$AUDIT_DIR"
+
+          [[ "$DISPATCH_ACTOR" == "$EXPECTED_OWNER" ]]
+          [[ "$DISPATCH_REF" == "refs/heads/main" ]]
+          [[ "$CONFIRMATION" == "TRTLLMINF-188-RACE-E2E" ]]
+          [[ "$SCENARIO" == "stale-to-authorized" || "$SCENARIO" == "same-actor-relabel" ]]
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          [[ "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_GUARD_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$EXPECTED_DRIVER_SHA256" =~ ^[0-9a-f]{64}$ ]]
+
+          current_main_sha="$(gh api "/repos/$EXPECTED_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          [[ "$current_main_sha" == "$WORKFLOW_SHA" ]]
+
+          pr="$(gh api "/repos/$EXPECTED_REPOSITORY/pulls/$PR_NUMBER")"
+          head_branch="$(jq -r '.head.ref' <<<"$pr")"
+          jq -e \
+            --arg repository "$EXPECTED_REPOSITORY" \
+            --arg title "$EXPECTED_PR_TITLE" \
+            --arg branch_prefix "$EXPECTED_BRANCH_PREFIX" \
+            --arg head_sha "$EXPECTED_HEAD_SHA" \
+            --arg label "$APPROVAL_LABEL" \
+            '.state == "open" and .merged == false and .draft == true and
+             .title == $title and .base.ref == "main" and
+             .base.repo.full_name == $repository and
+             .head.repo.full_name == $repository and
+             (.head.ref | startswith($branch_prefix)) and .head.sha == $head_sha and
+             ([.labels[].name] | index($label) == null)' \
+            <<<"$pr" >/dev/null
+          jq '{number,state,merged,draft,title,html_url,base:{ref:.base.ref,sha:.base.sha,repo:.base.repo.full_name},head:{ref:.head.ref,sha:.head.sha,repo:.head.repo.full_name},labels:[.labels[].name]}' \
+            <<<"$pr" > "$AUDIT_DIR/pr-before.json"
+
+          files="$(gh api "/repos/$EXPECTED_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100")"
+          jq -e --arg marker "$EXPECTED_MARKER_PATH" \
+            'length == 1 and .[0].filename == $marker and .[0].status == "added"' \
+            <<<"$files" >/dev/null
+          jq '[.[] | {filename,status,additions,deletions,changes,sha}]' \
+            <<<"$files" > "$AUDIT_DIR/pr-files.json"
+
+          observed_guard_sha256=''
+          observed_driver_sha256=''
+          for spec in \
+            "$GUARD_WORKFLOW_PATH:$EXPECTED_GUARD_SHA256:tested-race-guard.yml" \
+            "$DRIVER_WORKFLOW_PATH:$EXPECTED_DRIVER_SHA256:tested-race-driver.yml"; do
+            IFS=: read -r path expected digest_path <<<"$spec"
+            gh api "/repos/$EXPECTED_REPOSITORY/contents/$path?ref=$WORKFLOW_SHA" \
+              --jq '.content' | tr -d '\n' | base64 --decode \
+              > "$AUDIT_DIR/$digest_path"
+            actual="$(sha256sum "$AUDIT_DIR/$digest_path" | awk '{print $1}')"
+            if [[ "$path" == "$GUARD_WORKFLOW_PATH" ]]; then
+              observed_guard_sha256="$actual"
+            else
+              observed_driver_sha256="$actual"
+            fi
+          done
+          [[ -n "$observed_guard_sha256" && -n "$observed_driver_sha256" ]]
+          jq -n \
+            --arg expected_guard "$EXPECTED_GUARD_SHA256" \
+            --arg observed_guard "$observed_guard_sha256" \
+            --arg expected_driver "$EXPECTED_DRIVER_SHA256" \
+            --arg observed_driver "$observed_driver_sha256" \
+            '{guard:{expected_sha256:$expected_guard,observed_sha256:$observed_guard},driver:{expected_sha256:$expected_driver,observed_sha256:$observed_driver}}' \
+            > "$AUDIT_DIR/hash-lock.json"
+          [[ "$observed_guard_sha256" == "$EXPECTED_GUARD_SHA256" ]]
+          [[ "$observed_driver_sha256" == "$EXPECTED_DRIVER_SHA256" ]]
+          grep -Fq "name: TRTLLMINF-188 deterministic race window" \
+            "$AUDIT_DIR/tested-race-guard.yml"
+          grep -Fq "run: sleep 90" "$AUDIT_DIR/tested-race-guard.yml"
+
+          started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          comments="$(gh api "/repos/$EXPECTED_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100")"
+          events="$(gh api "/repos/$EXPECTED_REPOSITORY/issues/$PR_NUMBER/events?per_page=100")"
+          jq '[.[] | {id,user:.user.login,body,created_at,html_url}]' \
+            <<<"$comments" > "$AUDIT_DIR/comments-before.json"
+          jq '[.[] | {id,event,actor:.actor.login,actor_type:.actor.type,label:.label.name,created_at,performed_via_github_app:.performed_via_github_app.slug}]' \
+            <<<"$events" > "$AUDIT_DIR/events-before.json"
+          jq -n \
+            --arg repository "$EXPECTED_REPOSITORY" \
+            --arg scenario "$SCENARIO" \
+            --arg actor "$DISPATCH_ACTOR" \
+            --arg ref "$DISPATCH_REF" \
+            --arg workflow_sha "$WORKFLOW_SHA" \
+            --arg run_id "$RUN_ID" \
+            --arg started_at "$started_at" \
+            '{repository:$repository,scenario:$scenario,actor:$actor,ref:$ref,workflow_sha:$workflow_sha,run_id:$run_id,started_at:$started_at}' \
+            > "$AUDIT_DIR/dispatch.json"
+
+          printf '%s\n' \
+            "head_branch=$head_branch" \
+            "started_at=$started_at" \
+            "observed_guard_sha256=$observed_guard_sha256" \
+            "observed_driver_sha256=$observed_driver_sha256" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Create repository-scoped GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.TRTLLM_CI_NEGATIVE_TEST_APP_CLIENT_ID }}
+          private-key: ${{ secrets.TRTLLM_CI_NEGATIVE_TEST_APP_PRIVATE_KEY }}
+          owner: ${{ env.EXPECTED_OWNER }}
+          repositories: ${{ env.EXPECTED_REPOSITORY_NAME }}
+          permission-pull-requests: write
+          skip-token-revoke: false
+
+      - name: Add initial approval label as App bot
+        id: initial-label
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$APP_SLUG" == "$EXPECTED_APP_SLUG" ]]
+          expected_actor="${APP_SLUG}[bot]"
+          current_main_sha="$(gh api "/repos/$EXPECTED_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          [[ "$current_main_sha" == "$WORKFLOW_SHA" ]]
+          pr="$(gh api "/repos/$EXPECTED_REPOSITORY/pulls/$PR_NUMBER")"
+          jq -e \
+            --arg repository "$EXPECTED_REPOSITORY" \
+            --arg title "$EXPECTED_PR_TITLE" \
+            --arg branch_prefix "$EXPECTED_BRANCH_PREFIX" \
+            --arg head_sha "$EXPECTED_HEAD_SHA" \
+            --arg label "$APPROVAL_LABEL" \
+            '.state == "open" and .merged == false and .draft == true and
+             .title == $title and .base.ref == "main" and
+             .base.repo.full_name == $repository and
+             .head.repo.full_name == $repository and
+             (.head.ref | startswith($branch_prefix)) and .head.sha == $head_sha and
+             ([.labels[].name] | index($label) == null)' \
+            <<<"$pr" >/dev/null
+
+          mutation_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          response="$(
+            jq -n --arg label "$APPROVAL_LABEL" '{labels:[$label]}' |
+              GH_TOKEN="$APP_TOKEN" gh api --method POST \
+                "/repos/$EXPECTED_REPOSITORY/issues/$PR_NUMBER/labels" --input -
+          )"
+          jq -e --arg label "$APPROVAL_LABEL" \
+            '[.[].name] | index($label) != null' <<<"$response" >/dev/null
+
+          event_a=''
+          events='[]'
+          for _attempt in $(seq 1 30); do
+            events="$(gh api "/repos/$EXPECTED_REPOSITORY/issues/$PR_NUMBER/events?per_page=100")"
+            event_a="$(jq -c \
+              --arg label "$APPROVAL_LABEL" \
+              --arg actor "$expected_actor" \
+              --arg app_slug "$APP_SLUG" \
+              --arg since "$mutation_at" \
+              '[.[] | select(.event == "labeled" and .label.name == $label and
+                 .actor.login == $actor and .actor.type == "Bot" and
+                 .created_at >= $since and
+                 (.performed_via_github_app == null or
+                  .performed_via_github_app.slug == $app_slug))] |
+               sort_by(.id) | last // empty' \
+              <<<"$events")"
+            [[ -n "$event_a" ]] && break
+            sleep 2
+          done
+          [[ -n "$event_a" ]]
+          event_a_id="$(jq -r '.id' <<<"$event_a")"
+
+          jq --arg expected_actor "$expected_actor" \
+            --arg mutation_at "$mutation_at" \
+            '{expected_actor:$expected_actor,mutation_at:$mutation_at,labels:[.[].name]}' \
+            <<<"$response" > "$AUDIT_DIR/initial-label-response.json"
+          jq '.' <<<"$event_a" > "$AUDIT_DIR/event-a.json"
+          printf '%s\n' \
+            "expected_app_actor=$expected_actor" \
+            "mutation_at=$mutation_at" \
+            "event_a_id=$event_a_id" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Wait for first guard race window
+        id: first-window
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          EXPECTED_HEAD_BRANCH: ${{ steps.preflight.outputs.head_branch }}
+          EXPECTED_APP_ACTOR: ${{ steps.initial-label.outputs.expected_app_actor }}
+          MUTATION_AT: ${{ steps.initial-label.outputs.mutation_at }}
+        run: |
+          set -euo pipefail
+          found=false
+          guard_run=''
+          jobs='{"jobs":[]}'
+          for _attempt in $(seq 1 60); do
+            runs="$(gh api "/repos/$EXPECTED_REPOSITORY/actions/workflows/post-merge-approval.yml/runs?event=pull_request_target&per_page=100")"
+            guard_run="$(jq -c \
+              --arg actor "$EXPECTED_APP_ACTOR" \
+              --arg since "$MUTATION_AT" \
+              --arg head_sha "$EXPECTED_HEAD_SHA" \
+              --arg head_branch "$EXPECTED_HEAD_BRANCH" \
+              '[.workflow_runs[] | select(.name == "Guard Post-Merge Approval Label" and
+                 .actor.login == $actor and .actor.type == "Bot" and
+                 .head_sha == $head_sha and .head_branch == $head_branch and
+                 .created_at >= $since)] | sort_by(.created_at) | last // empty' \
+              <<<"$runs")"
+            if [[ -n "$guard_run" ]]; then
+              run_a_id="$(jq -r '.id' <<<"$guard_run")"
+              jobs="$(gh api "/repos/$EXPECTED_REPOSITORY/actions/runs/$run_a_id/jobs?per_page=100")"
+              pause_status="$(jq -r --arg step "$RACE_STEP" \
+                '[.jobs[].steps[] | select(.name == $step)] | last | .status // ""' \
+                <<<"$jobs")"
+              if [[ "$pause_status" == "in_progress" ]]; then
+                found=true
+                break
+              fi
+              [[ "$(jq -r '.status' <<<"$guard_run")" != "completed" ]] || break
+            fi
+            sleep 3
+          done
+          [[ "$found" == "true" ]]
+          run_a_id="$(jq -r '.id' <<<"$guard_run")"
+          job_a_id="$(jq -r '.jobs[0].id' <<<"$jobs")"
+          jq '{id,name,path,event,status,conclusion,actor:.actor.login,head_branch,head_sha,run_number,run_attempt,created_at,updated_at,html_url}' \
+            <<<"$guard_run" > "$AUDIT_DIR/run-a-window.json"
+          jq '{total_count,jobs:[.jobs[] | {id,name,status,conclusion,started_at,completed_at,html_url,steps:[.steps[] | {name,status,conclusion,number,started_at,completed_at}]}]}' \
+            <<<"$jobs" > "$AUDIT_DIR/run-a-window-jobs.json"
+          printf '%s\n' "run_a_id=$run_a_id" "job_a_id=$job_a_id" >> "$GITHUB_OUTPUT"
+
+      - name: Re-label as the same App actor
+        if: inputs.scenario == 'same-actor-relabel'
+        id: same-actor-relabel
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          EVENT_A_ID: ${{ steps.initial-label.outputs.event_a_id }}
+          EXPECTED_APP_ACTOR: ${{ steps.initial-label.outputs.expected_app_actor }}
+          RUN_A_ID: ${{ steps.first-window.outputs.run_a_id }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$APP_SLUG" == "$EXPECTED_APP_SLUG" ]]
+          current_main_sha="$(gh api "/repos/$EXPECTED_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          [[ "$current_main_sha" == "$WORKFLOW_SHA" ]]
+          pr="$(gh api "/repos/$EXPECTED_REPOSITORY/pulls/$PR_NUMBER")"
+          jq -e \
+            --arg repository "$EXPECTED_REPOSITORY" \
+            --arg title "$EXPECTED_PR_TITLE" \
+            --arg branch_prefix "$EXPECTED_BRANCH_PREFIX" \
+            --arg head_sha "$EXPECTED_HEAD_SHA" \
+            --arg label "$APPROVAL_LABEL" \
+            '.state == "open" and .merged == false and .draft == true and
+             .title == $title and .base.ref == "main" and
+             .base.repo.full_name == $repository and
+             .head.repo.full_name == $repository and
+             (.head.ref | startswith($branch_prefix)) and .head.sha == $head_sha and
+             ([.labels[].name] | index($label) != null)' <<<"$pr" >/dev/null
+          events="$(gh api "/repos/$EXPECTED_REPOSITORY/issues/$PR_NUMBER/events?per_page=100")"
+          latest_id="$(jq -r --arg label "$APPROVAL_LABEL" \
+            '[.[] | select(.event == "labeled" and .label.name == $label)] |
+             sort_by(.id) | last | .id' <<<"$events")"
+          [[ "$latest_id" == "$EVENT_A_ID" ]]
+
+          relabel_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          encoded_label="ci%3A%20post-merge%20approved"
+          [[ "$APP_SLUG" == "$EXPECTED_APP_SLUG" ]]
+          GH_TOKEN="$APP_TOKEN" gh api --silent --method DELETE \
+            "/repos/$EXPECTED_REPOSITORY/issues/$PR_NUMBER/labels/$encoded_label"
+
+          pr="$(gh api "/repos/$EXPECTED_REPOSITORY/pulls/$PR_NUMBER")"
+          jq -e \
+            --arg repository "$EXPECTED_REPOSITORY" \
+            --arg title "$EXPECTED_PR_TITLE" \
+            --arg branch_prefix "$EXPECTED_BRANCH_PREFIX" \
+            --arg head_sha "$EXPECTED_HEAD_SHA" \
+            --arg label "$APPROVAL_LABEL" \
+            '.state == "open" and .merged == false and .draft == true and
+             .title == $title and .base.ref == "main" and
+             .base.repo.full_name == $repository and
+             .head.repo.full_name == $repository and
+             (.head.ref | startswith($branch_prefix)) and .head.sha == $head_sha and
+             ([.labels[].name] | index($label) == null)' <<<"$pr" >/dev/null
+          current_main_sha="$(gh api "/repos/$EXPECTED_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          [[ "$current_main_sha" == "$WORKFLOW_SHA" ]]
+          [[ "$APP_SLUG" == "$EXPECTED_APP_SLUG" ]]
+          jq -n --arg label "$APPROVAL_LABEL" '{labels:[$label]}' |
+            GH_TOKEN="$APP_TOKEN" gh api --method POST \
+              "/repos/$EXPECTED_REPOSITORY/issues/$PR_NUMBER/labels" --input - >/dev/null
+
+          event_b=''
+          unlabeled=''
+          events='[]'
+          for _attempt in $(seq 1 30); do
+            events="$(gh api "/repos/$EXPECTED_REPOSITORY/issues/$PR_NUMBER/events?per_page=100")"
+            event_b="$(jq -c \
+              --arg label "$APPROVAL_LABEL" \
+              --arg actor "$EXPECTED_APP_ACTOR" \
+              --argjson event_a "$EVENT_A_ID" \
+              '[.[] | select(.event == "labeled" and .label.name == $label and
+                 .actor.login == $actor and .actor.type == "Bot" and .id > $event_a)] |
+               sort_by(.id) | last // empty' <<<"$events")"
+            if [[ -n "$event_b" ]]; then
+              event_b_id="$(jq -r '.id' <<<"$event_b")"
+              unlabeled="$(jq -c \
+                --arg label "$APPROVAL_LABEL" \
+                --arg actor "$EXPECTED_APP_ACTOR" \
+                --argjson event_a "$EVENT_A_ID" \
+                --argjson event_b "$event_b_id" \
+                '[.[] | select(.event == "unlabeled" and .label.name == $label and
+                   .actor.login == $actor and .id > $event_a and .id < $event_b)] |
+                 sort_by(.id) | last // empty' <<<"$events")"
+              [[ -n "$unlabeled" ]] && break
+            fi
+            sleep 2
+          done
+          [[ -n "$event_b" && -n "$unlabeled" ]]
+          jobs_a="$(gh api "/repos/$EXPECTED_REPOSITORY/actions/runs/$RUN_A_ID/jobs?per_page=100")"
+          pause_status="$(jq -r --arg step "$RACE_STEP" \
+            '[.jobs[].steps[] | select(.name == $step)] | last | .status // ""' \
+            <<<"$jobs_a")"
+          [[ "$pause_status" == "in_progress" ]]
+          jq '{total_count,jobs:[.jobs[] | {id,name,status,conclusion,started_at,completed_at,html_url,steps:[.steps[] | {name,status,conclusion,number,started_at,completed_at}]}]}' \
+            <<<"$jobs_a" > "$AUDIT_DIR/event-b-run-a-jobs.json"
+          event_b_id="$(jq -r '.id' <<<"$event_b")"
+          event_b_at="$(jq -r '.created_at' <<<"$event_b")"
+          jq '.' <<<"$unlabeled" > "$AUDIT_DIR/same-actor-unlabeled.json"
+          jq '.' <<<"$event_b" > "$AUDIT_DIR/event-b.json"
+          printf '%s\n' "event_b_id=$event_b_id" "event_b_at=$event_b_at" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for external authorized re-label
+        if: inputs.scenario == 'stale-to-authorized'
+        id: authorized-relabel
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          EVENT_A_ID: ${{ steps.initial-label.outputs.event_a_id }}
+          RUN_A_ID: ${{ steps.first-window.outputs.run_a_id }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          current_main_sha="$(gh api "/repos/$EXPECTED_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          [[ "$current_main_sha" == "$WORKFLOW_SHA" ]]
+          pr="$(gh api "/repos/$EXPECTED_REPOSITORY/pulls/$PR_NUMBER")"
+          jq -e \
+            --arg repository "$EXPECTED_REPOSITORY" \
+            --arg title "$EXPECTED_PR_TITLE" \
+            --arg branch_prefix "$EXPECTED_BRANCH_PREFIX" \
+            --arg head_sha "$EXPECTED_HEAD_SHA" \
+            --arg label "$APPROVAL_LABEL" \
+            '.state == "open" and .merged == false and .draft == true and
+             .title == $title and .base.ref == "main" and
+             .base.repo.full_name == $repository and
+             .head.repo.full_name == $repository and
+             (.head.ref | startswith($branch_prefix)) and .head.sha == $head_sha and
+             ([.labels[].name] | index($label) != null)' <<<"$pr" >/dev/null
+
+          echo "::notice::As $EXPECTED_OWNER, remove and re-add '$APPROVAL_LABEL' on PR #$PR_NUMBER while Run A is paused."
+          event_b=''
+          unlabeled=''
+          events='[]'
+          for _attempt in $(seq 1 150); do
+            events="$(gh api "/repos/$EXPECTED_REPOSITORY/issues/$PR_NUMBER/events?per_page=100")"
+            event_b="$(jq -c \
+              --arg label "$APPROVAL_LABEL" \
+              --arg actor "$EXPECTED_OWNER" \
+              --argjson event_a "$EVENT_A_ID" \
+              '[.[] | select(.event == "labeled" and .label.name == $label and
+                 .actor.login == $actor and .actor.type == "User" and .id > $event_a)] |
+               sort_by(.id) | last // empty' <<<"$events")"
+            if [[ -n "$event_b" ]]; then
+              event_b_id="$(jq -r '.id' <<<"$event_b")"
+              unlabeled="$(jq -c \
+                --arg label "$APPROVAL_LABEL" \
+                --arg actor "$EXPECTED_OWNER" \
+                --argjson event_a "$EVENT_A_ID" \
+                --argjson event_b "$event_b_id" \
+                '[.[] | select(.event == "unlabeled" and .label.name == $label and
+                   .actor.login == $actor and .actor.type == "User" and
+                   .id > $event_a and .id < $event_b)] |
+                 sort_by(.id) | last // empty' <<<"$events")"
+              [[ -n "$unlabeled" ]] && break
+            fi
+            sleep 2
+          done
+          [[ -n "$event_b" && -n "$unlabeled" ]]
+
+          pr="$(gh api "/repos/$EXPECTED_REPOSITORY/pulls/$PR_NUMBER")"
+          jq -e \
+            --arg repository "$EXPECTED_REPOSITORY" \
+            --arg title "$EXPECTED_PR_TITLE" \
+            --arg branch_prefix "$EXPECTED_BRANCH_PREFIX" \
+            --arg head_sha "$EXPECTED_HEAD_SHA" \
+            --arg label "$APPROVAL_LABEL" \
+            '.state == "open" and .merged == false and .draft == true and
+             .title == $title and .base.ref == "main" and
+             .base.repo.full_name == $repository and
+             .head.repo.full_name == $repository and
+             (.head.ref | startswith($branch_prefix)) and .head.sha == $head_sha and
+             ([.labels[].name] | index($label) != null)' <<<"$pr" >/dev/null
+          jobs_a="$(gh api "/repos/$EXPECTED_REPOSITORY/actions/runs/$RUN_A_ID/jobs?per_page=100")"
+          pause_status="$(jq -r --arg step "$RACE_STEP" \
+            '[.jobs[].steps[] | select(.name == $step)] | last | .status // ""' \
+            <<<"$jobs_a")"
+          [[ "$pause_status" == "in_progress" ]]
+          jq '{total_count,jobs:[.jobs[] | {id,name,status,conclusion,started_at,completed_at,html_url,steps:[.steps[] | {name,status,conclusion,number,started_at,completed_at}]}]}' \
+            <<<"$jobs_a" > "$AUDIT_DIR/event-b-run-a-jobs.json"
+          event_b_id="$(jq -r '.id' <<<"$event_b")"
+          event_b_at="$(jq -r '.created_at' <<<"$event_b")"
+          jq '.' <<<"$unlabeled" > "$AUDIT_DIR/authorized-unlabeled.json"
+          jq '.' <<<"$event_b" > "$AUDIT_DIR/event-b.json"
+          printf '%s\n' "event_b_id=$event_b_id" "event_b_at=$event_b_at" >> "$GITHUB_OUTPUT"
+
+      - name: Observe same-actor handoff before final cleanup
+        if: inputs.scenario == 'same-actor-relabel'
+        id: handoff
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          EXPECTED_HEAD_BRANCH: ${{ steps.preflight.outputs.head_branch }}
+          EXPECTED_APP_ACTOR: ${{ steps.initial-label.outputs.expected_app_actor }}
+          EVENT_B_AT: ${{ steps.same-actor-relabel.outputs.event_b_at }}
+          RUN_A_ID: ${{ steps.first-window.outputs.run_a_id }}
+          STARTED_AT: ${{ steps.preflight.outputs.started_at }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          observed=false
+          run_a=''
+          run_b=''
+          jobs_a='{"jobs":[]}'
+          jobs_b='{"jobs":[]}'
+          for _attempt in $(seq 1 90); do
+            runs="$(gh api "/repos/$EXPECTED_REPOSITORY/actions/workflows/post-merge-approval.yml/runs?event=pull_request_target&per_page=100")"
+            run_b="$(jq -c \
+              --arg actor "$EXPECTED_APP_ACTOR" \
+              --arg since "$EVENT_B_AT" \
+              --arg head_sha "$EXPECTED_HEAD_SHA" \
+              --arg head_branch "$EXPECTED_HEAD_BRANCH" \
+              --argjson run_a "$RUN_A_ID" \
+              '[.workflow_runs[] | select(.id != $run_a and
+                 .name == "Guard Post-Merge Approval Label" and
+                 .actor.login == $actor and .actor.type == "Bot" and
+                 .head_sha == $head_sha and .head_branch == $head_branch and
+                 .created_at >= $since)] | sort_by(.created_at) | first // empty' \
+              <<<"$runs")"
+            if [[ -n "$run_b" ]]; then
+              run_b_id="$(jq -r '.id' <<<"$run_b")"
+              run_a="$(gh api "/repos/$EXPECTED_REPOSITORY/actions/runs/$RUN_A_ID")"
+              jobs_a="$(gh api "/repos/$EXPECTED_REPOSITORY/actions/runs/$RUN_A_ID/jobs?per_page=100")"
+              jobs_b="$(gh api "/repos/$EXPECTED_REPOSITORY/actions/runs/$run_b_id/jobs?per_page=100")"
+              pause_b="$(jq -r --arg step "$RACE_STEP" \
+                '[.jobs[].steps[] | select(.name == $step)] | last | .status // ""' <<<"$jobs_b")"
+              if [[ "$(jq -r '.status' <<<"$run_a")" == "completed" &&
+                    "$(jq -r '.conclusion' <<<"$run_a")" == "success" &&
+                    "$pause_b" == "in_progress" ]]; then
+                observed=true
+                break
+              fi
+            fi
+            sleep 2
+          done
+          [[ "$observed" == "true" ]]
+          current_main_sha="$(gh api "/repos/$EXPECTED_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          [[ "$current_main_sha" == "$WORKFLOW_SHA" ]]
+          pr="$(gh api "/repos/$EXPECTED_REPOSITORY/pulls/$PR_NUMBER")"
+          jq -e \
+            --arg repository "$EXPECTED_REPOSITORY" \
+            --arg title "$EXPECTED_PR_TITLE" \
+            --arg branch_prefix "$EXPECTED_BRANCH_PREFIX" \
+            --arg head_sha "$EXPECTED_HEAD_SHA" \
+            --arg label "$APPROVAL_LABEL" \
+            '.state == "open" and .merged == false and .draft == true and
+             .title == $title and .base.ref == "main" and
+             .base.repo.full_name == $repository and
+             .head.repo.full_name == $repository and
+             (.head.ref | startswith($branch_prefix)) and .head.sha == $head_sha and
+             ([.labels[].name] | index($label) != null)' <<<"$pr" >/dev/null
+          comments="$(gh api "/repos/$EXPECTED_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100")"
+          expected_comment_body="Removed the \"$APPROVAL_LABEL\" label because @$EXPECTED_APP_ACTOR could not be verified as an active member of NVIDIA/trt-llm-ci-approvers. Ask a member of that team to apply it."
+          denial_count="$(jq \
+            --arg since "$STARTED_AT" \
+            --arg body "$expected_comment_body" \
+            '[.[] | select(.created_at >= $since and .user.login == "github-actions[bot]" and
+               .body == $body)] | length' <<<"$comments")"
+          [[ "$denial_count" == "0" ]]
+          jq -n \
+            --argjson run_a_id "$RUN_A_ID" \
+            --argjson run_b_id "$(jq -r '.id' <<<"$run_b")" \
+            --arg run_a_status "$(jq -r '.status' <<<"$run_a")" \
+            --arg run_a_conclusion "$(jq -r '.conclusion' <<<"$run_a")" \
+            --arg run_b_pause_status "$pause_b" \
+            --argjson approval_label_present true \
+            --argjson denial_count "$denial_count" \
+            '{run_a_id:$run_a_id,run_b_id:$run_b_id,run_a_status:$run_a_status,run_a_conclusion:$run_a_conclusion,run_b_pause_status:$run_b_pause_status,approval_label_present:$approval_label_present,denial_count:$denial_count}' \
+            > "$AUDIT_DIR/handoff-state.json"
+          jq '{id,name,path,event,status,conclusion,actor:.actor.login,head_branch,head_sha,run_number,run_attempt,created_at,updated_at,html_url}' \
+            <<<"$run_b" > "$AUDIT_DIR/run-b-handoff.json"
+          jq '{total_count,jobs:[.jobs[] | {id,name,status,conclusion,started_at,completed_at,html_url,steps:[.steps[] | {name,status,conclusion,number,started_at,completed_at}]}]}' \
+            <<<"$jobs_a" > "$AUDIT_DIR/run-a-handoff-jobs.json"
+          jq '{total_count,jobs:[.jobs[] | {id,name,status,conclusion,started_at,completed_at,html_url,steps:[.steps[] | {name,status,conclusion,number,started_at,completed_at}]}]}' \
+            <<<"$jobs_b" > "$AUDIT_DIR/run-b-handoff-jobs.json"
+          printf '%s\n' "run_b_id=$(jq -r '.id' <<<"$run_b")" >> "$GITHUB_OUTPUT"
+
+      - name: Verify terminal race behavior
+        id: verify
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SCENARIO: ${{ inputs.scenario }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          EXPECTED_HEAD_BRANCH: ${{ steps.preflight.outputs.head_branch }}
+          EXPECTED_APP_ACTOR: ${{ steps.initial-label.outputs.expected_app_actor }}
+          STARTED_AT: ${{ steps.preflight.outputs.started_at }}
+          RUN_A_ID: ${{ steps.first-window.outputs.run_a_id }}
+          EVENT_A_ID: ${{ steps.initial-label.outputs.event_a_id }}
+          EVENT_B_ID_AUTHORIZED: ${{ steps.authorized-relabel.outputs.event_b_id }}
+          EVENT_B_AT_AUTHORIZED: ${{ steps.authorized-relabel.outputs.event_b_at }}
+          EVENT_B_ID_APP: ${{ steps.same-actor-relabel.outputs.event_b_id }}
+          EVENT_B_AT_APP: ${{ steps.same-actor-relabel.outputs.event_b_at }}
+          EXPECTED_GUARD_SHA256: ${{ inputs.expected_guard_sha256 }}
+          EXPECTED_DRIVER_SHA256: ${{ inputs.expected_driver_sha256 }}
+          OBSERVED_GUARD_SHA256: ${{ steps.preflight.outputs.observed_guard_sha256 }}
+          OBSERVED_DRIVER_SHA256: ${{ steps.preflight.outputs.observed_driver_sha256 }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$SCENARIO" == "stale-to-authorized" ]]; then
+            event_b_id="$EVENT_B_ID_AUTHORIZED"
+            event_b_at="$EVENT_B_AT_AUTHORIZED"
+            expected_b_actor="$EXPECTED_OWNER"
+          else
+            event_b_id="$EVENT_B_ID_APP"
+            event_b_at="$EVENT_B_AT_APP"
+            expected_b_actor="$EXPECTED_APP_ACTOR"
+          fi
+          [[ "$event_b_id" =~ ^[1-9][0-9]*$ && "$event_b_id" != "$EVENT_A_ID" ]]
+
+          terminal=false
+          run_a=''
+          run_b=''
+          jobs_a='{"jobs":[]}'
+          jobs_b='{"jobs":[]}'
+          issue='{}'
+          comments='[]'
+          events='[]'
+          for _attempt in $(seq 1 150); do
+            run_a="$(gh api "/repos/$EXPECTED_REPOSITORY/actions/runs/$RUN_A_ID")"
+            runs="$(gh api "/repos/$EXPECTED_REPOSITORY/actions/workflows/post-merge-approval.yml/runs?event=pull_request_target&per_page=100")"
+            run_b="$(jq -c \
+              --arg actor "$expected_b_actor" \
+              --arg since "$event_b_at" \
+              --arg head_sha "$EXPECTED_HEAD_SHA" \
+              --arg head_branch "$EXPECTED_HEAD_BRANCH" \
+              --argjson run_a "$RUN_A_ID" \
+              '[.workflow_runs[] | select(.id != $run_a and .actor.login == $actor and
+                 .head_sha == $head_sha and .head_branch == $head_branch and
+                 .created_at >= $since)] | sort_by(.created_at) | last // empty' \
+              <<<"$runs")"
+            if [[ -n "$run_b" &&
+                  "$(jq -r '.status' <<<"$run_a")" == "completed" &&
+                  "$(jq -r '.status' <<<"$run_b")" == "completed" ]]; then
+              [[ "$(jq -r '.conclusion' <<<"$run_a")" == "success" ]]
+              [[ "$(jq -r '.conclusion' <<<"$run_b")" == "success" ]]
+              terminal=true
+              break
+            fi
+            sleep 3
+          done
+          [[ "$terminal" == "true" ]]
+
+          run_b_id="$(jq -r '.id' <<<"$run_b")"
+          jobs_a="$(gh api "/repos/$EXPECTED_REPOSITORY/actions/runs/$RUN_A_ID/jobs?per_page=100")"
+          jobs_b="$(gh api "/repos/$EXPECTED_REPOSITORY/actions/runs/$run_b_id/jobs?per_page=100")"
+          step_conclusion() {
+            local jobs="$1"
+            local step="$2"
+            jq -r --arg step "$step" \
+              '[.jobs[].steps[] | select(.name == $step)] | last | .conclusion // ""' \
+              <<<"$jobs"
+          }
+
+          [[ "$(step_conclusion "$jobs_a" "Validate post-merge approver")" == "success" ]]
+          [[ "$(step_conclusion "$jobs_a" "$RACE_STEP")" == "success" ]]
+          [[ "$(step_conclusion "$jobs_a" "Clear unauthorized post-merge approval")" == "success" ]]
+          [[ "$(step_conclusion "$jobs_b" "Validate post-merge approver")" == "success" ]]
+          if [[ "$SCENARIO" == "stale-to-authorized" ]]; then
+            [[ "$(step_conclusion "$jobs_b" "$RACE_STEP")" == "skipped" ]]
+            [[ "$(step_conclusion "$jobs_b" "Clear unauthorized post-merge approval")" == "skipped" ]]
+          else
+            [[ "$(step_conclusion "$jobs_b" "$RACE_STEP")" == "success" ]]
+            [[ "$(step_conclusion "$jobs_b" "Clear unauthorized post-merge approval")" == "success" ]]
+          fi
+
+          pr="$(gh api "/repos/$EXPECTED_REPOSITORY/pulls/$PR_NUMBER")"
+          jq -e \
+            --arg repository "$EXPECTED_REPOSITORY" \
+            --arg title "$EXPECTED_PR_TITLE" \
+            --arg branch_prefix "$EXPECTED_BRANCH_PREFIX" \
+            --arg head_sha "$EXPECTED_HEAD_SHA" \
+            '.state == "open" and .merged == false and .draft == true and
+             .title == $title and .base.ref == "main" and
+             .base.repo.full_name == $repository and
+             .head.repo.full_name == $repository and
+             (.head.ref | startswith($branch_prefix)) and .head.sha == $head_sha' \
+            <<<"$pr" >/dev/null
+          issue="$(gh api "/repos/$EXPECTED_REPOSITORY/issues/$PR_NUMBER")"
+          comments="$(gh api "/repos/$EXPECTED_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100")"
+          events="$(gh api "/repos/$EXPECTED_REPOSITORY/issues/$PR_NUMBER/events?per_page=100")"
+          latest_event="$(jq -c --arg label "$APPROVAL_LABEL" \
+            '[.[] | select(.event == "labeled" and .label.name == $label)] |
+             sort_by(.id) | last' <<<"$events")"
+          [[ "$(jq -r '.id' <<<"$latest_event")" == "$event_b_id" ]]
+          [[ "$(jq -r '.actor.login' <<<"$latest_event")" == "$expected_b_actor" ]]
+
+          expected_comment_body="Removed the \"$APPROVAL_LABEL\" label because @$EXPECTED_APP_ACTOR could not be verified as an active member of NVIDIA/trt-llm-ci-approvers. Ask a member of that team to apply it."
+          denial_count="$(jq \
+            --arg since "$STARTED_AT" \
+            --arg body "$expected_comment_body" \
+            '[.[] | select(.created_at >= $since and .user.login == "github-actions[bot]" and
+               .body == $body)] | length' <<<"$comments")"
+          label_present="$(jq --arg label "$APPROVAL_LABEL" \
+            '[.labels[].name] | index($label) != null' <<<"$issue")"
+          if [[ "$SCENARIO" == "stale-to-authorized" ]]; then
+            [[ "$label_present" == "true" && "$denial_count" == "0" ]]
+          else
+            [[ "$label_present" == "false" && "$denial_count" == "1" ]]
+          fi
+
+          current_main_sha="$(gh api "/repos/$EXPECTED_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          [[ "$current_main_sha" == "$WORKFLOW_SHA" ]]
+          jq --arg label "$APPROVAL_LABEL" \
+            '{number,state,merged,draft,title,html_url,base:{ref:.base.ref,sha:.base.sha,repo:.base.repo.full_name},head:{ref:.head.ref,sha:.head.sha,repo:.head.repo.full_name},labels:[.labels[].name],approval_label_present:([.labels[].name] | index($label) != null)}' \
+            <<<"$pr" > "$AUDIT_DIR/pr-final.json"
+          jq '[.[] | {id,event,actor:.actor.login,actor_type:.actor.type,label:.label.name,created_at,performed_via_github_app:.performed_via_github_app.slug}]' \
+            <<<"$events" > "$AUDIT_DIR/events-final.json"
+          jq '[.[] | {id,user:.user.login,body,created_at,html_url}]' \
+            <<<"$comments" > "$AUDIT_DIR/comments-final.json"
+          jq '{id,name,path,event,status,conclusion,actor:.actor.login,head_branch,head_sha,run_number,run_attempt,created_at,updated_at,html_url}' \
+            <<<"$run_a" > "$AUDIT_DIR/run-a-final.json"
+          jq '{id,name,path,event,status,conclusion,actor:.actor.login,head_branch,head_sha,run_number,run_attempt,created_at,updated_at,html_url}' \
+            <<<"$run_b" > "$AUDIT_DIR/run-b-final.json"
+          jq '{total_count,jobs:[.jobs[] | {id,name,status,conclusion,started_at,completed_at,html_url,steps:[.steps[] | {name,status,conclusion,number,started_at,completed_at}]}]}' \
+            <<<"$jobs_a" > "$AUDIT_DIR/run-a-final-jobs.json"
+          jq '{total_count,jobs:[.jobs[] | {id,name,status,conclusion,started_at,completed_at,html_url,steps:[.steps[] | {name,status,conclusion,number,started_at,completed_at}]}]}' \
+            <<<"$jobs_b" > "$AUDIT_DIR/run-b-final-jobs.json"
+          jq -n \
+            --arg scenario "$SCENARIO" \
+            --argjson run_a_id "$RUN_A_ID" \
+            --argjson run_b_id "$run_b_id" \
+            --argjson event_a_id "$EVENT_A_ID" \
+            --argjson event_b_id "$event_b_id" \
+            --argjson label_present "$label_present" \
+            --argjson denial_count "$denial_count" \
+            --arg expected_guard_sha256 "$EXPECTED_GUARD_SHA256" \
+            --arg observed_guard_sha256 "$OBSERVED_GUARD_SHA256" \
+            --arg expected_driver_sha256 "$EXPECTED_DRIVER_SHA256" \
+            --arg observed_driver_sha256 "$OBSERVED_DRIVER_SHA256" \
+            '{scenario:$scenario,run_a_id:$run_a_id,run_b_id:$run_b_id,event_a_id:$event_a_id,event_b_id:$event_b_id,label_present:$label_present,denial_count:$denial_count,hashes:{guard:{expected_sha256:$expected_guard_sha256,observed_sha256:$observed_guard_sha256},driver:{expected_sha256:$expected_driver_sha256,observed_sha256:$observed_driver_sha256}}}' \
+            > "$AUDIT_DIR/result.json"
+          printf '%s\n' "run_b_id=$run_b_id" >> "$GITHUB_OUTPUT"
+
+      - name: Event-aware emergency cleanup
+        id: emergency-cleanup
+        if: always() && steps.app-token.outcome == 'success'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$AUDIT_DIR"
+          ran=true
+          succeeded=false
+          removal_attempted=false
+          removal_succeeded=false
+          authorized_label_preserved=false
+          contract_ok=false
+          main_unchanged=false
+          unsafe_to_remove=false
+          app_identity_ok=false
+          latest_actor=''
+          latest_event_id=''
+          label_present_before=null
+          label_present_after=null
+          expected_app_actor="${APP_SLUG}[bot]"
+
+          write_cleanup_evidence() {
+            local exit_status="$1"
+            jq -n \
+              --argjson ran "$ran" \
+              --argjson succeeded "$succeeded" \
+              --argjson removal_attempted "$removal_attempted" \
+              --argjson removal_succeeded "$removal_succeeded" \
+              --argjson authorized_label_preserved "$authorized_label_preserved" \
+              --argjson contract_ok "$contract_ok" \
+              --argjson main_unchanged "$main_unchanged" \
+              --argjson unsafe_to_remove "$unsafe_to_remove" \
+              --argjson app_identity_ok "$app_identity_ok" \
+              --argjson exit_status "$exit_status" \
+              --arg latest_actor "$latest_actor" \
+              --arg latest_event_id "$latest_event_id" \
+              --argjson label_present_before "$label_present_before" \
+              --argjson label_present_after "$label_present_after" \
+              '{ran:$ran,succeeded:$succeeded,removal_attempted:$removal_attempted,removal_succeeded:$removal_succeeded,authorized_label_preserved:$authorized_label_preserved,contract_ok:$contract_ok,main_unchanged:$main_unchanged,unsafe_to_remove:$unsafe_to_remove,app_identity_ok:$app_identity_ok,exit_status:$exit_status,latest_label_actor:$latest_actor,latest_label_event_id:$latest_event_id,label_present_before:$label_present_before,label_present_after:$label_present_after}' \
+              > "$AUDIT_DIR/emergency-cleanup.json"
+          }
+          finalize_cleanup_evidence() {
+            local exit_status="$?"
+            trap - EXIT
+            write_cleanup_evidence "$exit_status" || :
+            exit "$exit_status"
+          }
+          trap finalize_cleanup_evidence EXIT
+
+          if [[ "$APP_SLUG" == "$EXPECTED_APP_SLUG" ]]; then
+            app_identity_ok=true
+          else
+            unsafe_to_remove=true
+            exit 1
+          fi
+
+          current_main_sha="$(gh api "/repos/$EXPECTED_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          [[ "$current_main_sha" == "$WORKFLOW_SHA" ]] && main_unchanged=true
+          pr="$(gh api "/repos/$EXPECTED_REPOSITORY/pulls/$PR_NUMBER")"
+          if jq -e \
+            --arg repository "$EXPECTED_REPOSITORY" \
+            --arg title "$EXPECTED_PR_TITLE" \
+            --arg branch_prefix "$EXPECTED_BRANCH_PREFIX" \
+            --arg head_sha "$EXPECTED_HEAD_SHA" \
+            '.state == "open" and .merged == false and .draft == true and
+             .title == $title and .base.ref == "main" and
+             .base.repo.full_name == $repository and
+             .head.repo.full_name == $repository and
+             (.head.ref | startswith($branch_prefix)) and .head.sha == $head_sha' \
+            <<<"$pr" >/dev/null; then
+            contract_ok=true
+          fi
+
+          events="$(gh api "/repos/$EXPECTED_REPOSITORY/issues/$PR_NUMBER/events?per_page=100")"
+          latest_event="$(jq -c --arg label "$APPROVAL_LABEL" \
+            '[.[] | select(.event == "labeled" and .label.name == $label)] |
+             sort_by(.id) | last // empty' <<<"$events")"
+          latest_actor="$(jq -r '.actor.login // ""' <<<"${latest_event:-{}}")"
+          latest_event_id="$(jq -r '.id // ""' <<<"${latest_event:-{}}")"
+          label_present_before="$(jq --arg label "$APPROVAL_LABEL" \
+            '[.labels[].name] | index($label) != null' <<<"$pr")"
+
+          if [[ "$label_present_before" == "false" ]]; then
+            succeeded=true
+          elif [[ "$contract_ok" != "true" || "$main_unchanged" != "true" ]]; then
+            unsafe_to_remove=true
+          elif [[ "$latest_actor" == "$EXPECTED_OWNER" ]]; then
+            authorized_label_preserved=true
+            succeeded=true
+          elif [[ "$latest_actor" == "$expected_app_actor" ]]; then
+            pr="$(gh api "/repos/$EXPECTED_REPOSITORY/pulls/$PR_NUMBER")"
+            events="$(gh api "/repos/$EXPECTED_REPOSITORY/issues/$PR_NUMBER/events?per_page=100")"
+            latest_event="$(jq -c --arg label "$APPROVAL_LABEL" \
+              '[.[] | select(.event == "labeled" and .label.name == $label)] |
+               sort_by(.id) | last // empty' <<<"$events")"
+            latest_actor="$(jq -r '.actor.login // ""' <<<"${latest_event:-{}}")"
+            latest_event_id="$(jq -r '.id // ""' <<<"${latest_event:-{}}")"
+            current_main_sha="$(gh api "/repos/$EXPECTED_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+            if [[ "$current_main_sha" == "$WORKFLOW_SHA" ]]; then
+              main_unchanged=true
+            else
+              main_unchanged=false
+            fi
+            if [[ "$app_identity_ok" == "true" && "$main_unchanged" == "true" ]] && jq -e \
+              --arg repository "$EXPECTED_REPOSITORY" \
+              --arg title "$EXPECTED_PR_TITLE" \
+              --arg branch_prefix "$EXPECTED_BRANCH_PREFIX" \
+              --arg head_sha "$EXPECTED_HEAD_SHA" \
+              --arg label "$APPROVAL_LABEL" \
+              --arg actor "$expected_app_actor" \
+              '.state == "open" and .merged == false and .draft == true and
+               .title == $title and .base.ref == "main" and
+               .base.repo.full_name == $repository and
+               .head.repo.full_name == $repository and
+               (.head.ref | startswith($branch_prefix)) and .head.sha == $head_sha and
+               ([.labels[].name] | index($label) != null)' <<<"$pr" >/dev/null &&
+               [[ "$latest_actor" == "$expected_app_actor" ]]; then
+              removal_attempted=true
+              encoded_label="ci%3A%20post-merge%20approved"
+              if GH_TOKEN="$APP_TOKEN" gh api --silent --method DELETE \
+                "/repos/$EXPECTED_REPOSITORY/issues/$PR_NUMBER/labels/$encoded_label"; then
+                removal_succeeded=true
+                succeeded=true
+              else
+                pr_after_attempt="$(gh api "/repos/$EXPECTED_REPOSITORY/pulls/$PR_NUMBER")"
+                label_after_attempt="$(jq --arg label "$APPROVAL_LABEL" \
+                  '[.labels[].name] | index($label) != null' <<<"$pr_after_attempt")"
+                if [[ "$label_after_attempt" == "false" ]]; then
+                  removal_succeeded=true
+                  succeeded=true
+                else
+                  unsafe_to_remove=true
+                fi
+              fi
+            else
+              unsafe_to_remove=true
+            fi
+          else
+            unsafe_to_remove=true
+          fi
+
+          pr_after="$(gh api "/repos/$EXPECTED_REPOSITORY/pulls/$PR_NUMBER")"
+          label_present_after="$(jq --arg label "$APPROVAL_LABEL" \
+            '[.labels[].name] | index($label) != null' <<<"$pr_after")"
+          if [[ "$removal_attempted" == "true" ]]; then
+            [[ "$removal_succeeded" == "true" && "$label_present_after" == "false" ]]
+          fi
+          if [[ "$authorized_label_preserved" == "true" ]]; then
+            [[ "$label_present_after" == "true" ]]
+          fi
+          [[ "$succeeded" == "true" ]]
+
+      - name: Build and scan sanitized race audit bundle
+        id: audit
+        if: always()
+        shell: bash
+        env:
+          PREFLIGHT_OUTCOME: ${{ steps.preflight.outcome }}
+          TOKEN_OUTCOME: ${{ steps.app-token.outcome }}
+          INITIAL_OUTCOME: ${{ steps.initial-label.outcome }}
+          WINDOW_OUTCOME: ${{ steps.first-window.outcome }}
+          SAME_ACTOR_OUTCOME: ${{ steps.same-actor-relabel.outcome }}
+          AUTHORIZED_OUTCOME: ${{ steps.authorized-relabel.outcome }}
+          HANDOFF_OUTCOME: ${{ steps.handoff.outcome }}
+          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+          EMERGENCY_CLEANUP_OUTCOME: ${{ steps.emergency-cleanup.outcome }}
+          EXPECTED_GUARD_SHA256: ${{ inputs.expected_guard_sha256 }}
+          EXPECTED_DRIVER_SHA256: ${{ inputs.expected_driver_sha256 }}
+          OBSERVED_GUARD_SHA256: ${{ steps.preflight.outputs.observed_guard_sha256 }}
+          OBSERVED_DRIVER_SHA256: ${{ steps.preflight.outputs.observed_driver_sha256 }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$AUDIT_DIR"
+          if [[ ! -f "$AUDIT_DIR/hash-lock.json" ]]; then
+            jq -n \
+              --arg expected_guard "$EXPECTED_GUARD_SHA256" \
+              --arg observed_guard "$OBSERVED_GUARD_SHA256" \
+              --arg expected_driver "$EXPECTED_DRIVER_SHA256" \
+              --arg observed_driver "$OBSERVED_DRIVER_SHA256" \
+              '{guard:{expected_sha256:$expected_guard,observed_sha256:$observed_guard},driver:{expected_sha256:$expected_driver,observed_sha256:$observed_driver}}' \
+              > "$AUDIT_DIR/hash-lock.json"
+          fi
+          if [[ ! -f "$AUDIT_DIR/emergency-cleanup.json" ]]; then
+            jq -n \
+              '{ran:false,succeeded:false,removal_attempted:false,removal_succeeded:false,authorized_label_preserved:false,contract_ok:false,main_unchanged:false,unsafe_to_remove:false,app_identity_ok:false,exit_status:null,latest_label_actor:"",latest_label_event_id:"",label_present_before:null,label_present_after:null}' \
+              > "$AUDIT_DIR/emergency-cleanup.json"
+          fi
+          if [[ -f "$AUDIT_DIR/result.json" ]]; then
+            jq --slurpfile cleanup "$AUDIT_DIR/emergency-cleanup.json" \
+              '. + {emergency_cleanup:$cleanup[0]}' \
+              "$AUDIT_DIR/result.json" > "$AUDIT_DIR/result.tmp"
+          else
+            jq -n \
+              --slurpfile hashes "$AUDIT_DIR/hash-lock.json" \
+              --slurpfile cleanup "$AUDIT_DIR/emergency-cleanup.json" \
+              '{hashes:($hashes[0] // null),emergency_cleanup:$cleanup[0]}' \
+              > "$AUDIT_DIR/result.tmp"
+          fi
+          mv "$AUDIT_DIR/result.tmp" "$AUDIT_DIR/result.json"
+          jq -n \
+            --arg preflight "$PREFLIGHT_OUTCOME" \
+            --arg token "$TOKEN_OUTCOME" \
+            --arg initial "$INITIAL_OUTCOME" \
+            --arg window "$WINDOW_OUTCOME" \
+            --arg same_actor "$SAME_ACTOR_OUTCOME" \
+            --arg authorized "$AUTHORIZED_OUTCOME" \
+            --arg handoff "$HANDOFF_OUTCOME" \
+            --arg verify "$VERIFY_OUTCOME" \
+            --arg emergency_cleanup "$EMERGENCY_CLEANUP_OUTCOME" \
+            '{steps:{preflight:$preflight,token:$token,initial:$initial,window:$window,same_actor:$same_actor,authorized:$authorized,handoff:$handoff,verify:$verify,emergency_cleanup:$emergency_cleanup}}' \
+            > "$AUDIT_DIR/step-outcomes.json"
+          if grep -R -q -E -- \
+            '-----BEGIN ([A-Z]+ )?PRIVATE KEY-----|github_pat_|gh[pousr]_[A-Za-z0-9]{20,}|Bearer[[:space:]]+[A-Za-z0-9._-]{20,}' \
+            "$AUDIT_DIR"; then
+            echo "Credential-pattern scan rejected the race audit bundle." >&2
+            exit 1
+          fi
+          (cd "$AUDIT_DIR" && sha256sum * > SHA256SUMS)
+          printf '%s\n' 'safe=true' >> "$GITHUB_OUTPUT"
+
+      - name: Upload sanitized race audit bundle
+        if: always() && steps.audit.outputs.safe == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: trtllminf-188-race-e2e-${{ inputs.scenario }}-${{ github.run_id }}
+          path: /tmp/trtllminf-188-race-e2e
+          if-no-files-found: error
+          retention-days: 30
