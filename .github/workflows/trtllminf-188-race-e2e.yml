@@ -831,8 +831,13 @@ jobs:
           latest_event="$(jq -c --arg label "$APPROVAL_LABEL" \
             '[.[] | select(.event == "labeled" and .label.name == $label)] |
              sort_by(.id) | last // empty' <<<"$events")"
-          latest_actor="$(jq -r '.actor.login // ""' <<<"${latest_event:-{}}")"
-          latest_event_id="$(jq -r '.id // ""' <<<"${latest_event:-{}}")"
+          if [[ -n "$latest_event" ]]; then
+            latest_actor="$(jq -r '.actor.login // ""' <<<"$latest_event")"
+            latest_event_id="$(jq -r '.id // ""' <<<"$latest_event")"
+          else
+            latest_actor=''
+            latest_event_id=''
+          fi
           label_present_before="$(jq --arg label "$APPROVAL_LABEL" \
             '[.labels[].name] | index($label) != null' <<<"$pr")"
 
@@ -849,8 +854,13 @@ jobs:
             latest_event="$(jq -c --arg label "$APPROVAL_LABEL" \
               '[.[] | select(.event == "labeled" and .label.name == $label)] |
                sort_by(.id) | last // empty' <<<"$events")"
-            latest_actor="$(jq -r '.actor.login // ""' <<<"${latest_event:-{}}")"
-            latest_event_id="$(jq -r '.id // ""' <<<"${latest_event:-{}}")"
+            if [[ -n "$latest_event" ]]; then
+              latest_actor="$(jq -r '.actor.login // ""' <<<"$latest_event")"
+              latest_event_id="$(jq -r '.id // ""' <<<"$latest_event")"
+            else
+              latest_actor=''
+              latest_event_id=''
+            fi
             current_main_sha="$(gh api "/repos/$EXPECTED_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
             if [[ "$current_main_sha" == "$WORKFLOW_SHA" ]]; then
               main_unchanged=true
@@ -966,7 +976,7 @@ jobs:
             '{steps:{preflight:$preflight,token:$token,initial:$initial,window:$window,same_actor:$same_actor,authorized:$authorized,handoff:$handoff,verify:$verify,emergency_cleanup:$emergency_cleanup}}' \
             > "$AUDIT_DIR/step-outcomes.json"
           if grep -R -q -E -- \
-            '-----BEGIN ([A-Z]+ )?PRIVATE KEY-----|github_pat_|gh[pousr]_[A-Za-z0-9]{20,}|Bearer[[:space:]]+[A-Za-z0-9._-]{20,}' \
+            '-----BEGIN ([A-Z]+ )?PRIVATE KEY-----|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|Bearer[[:space:]]+[A-Za-z0-9._-]{20,}' \
             "$AUDIT_DIR"; then
             echo "Credential-pattern scan rejected the race audit bundle." >&2
             exit 1
