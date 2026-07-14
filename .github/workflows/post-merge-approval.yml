@@ -110,6 +110,12 @@ jobs:
               return 'false';
             }
 
+      # Fork-only deterministic pause for TRTLLMINF-188 race regression.
+      - name: TRTLLMINF-188 deterministic race window
+        if: always() && !cancelled() && steps.validate.outputs.result != 'true'
+        shell: bash
+        run: sleep 90
+
       - name: Clear unauthorized post-merge approval
         if: always() && !cancelled() && steps.validate.outputs.result != 'true'
         uses: actions/github-script@v8
