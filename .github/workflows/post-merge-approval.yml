@@ -113,6 +113,12 @@ jobs:
               return 'false';
             }
 
+      # Fork-only deterministic pause for TRTLLMINF-188 cancellation regression.
+      - name: TRTLLMINF-188 deterministic cancellation window
+        if: always() && !cancelled() && steps.validate.outputs.result != 'true'
+        shell: bash
+        run: sleep 90
+
       - name: Clear unauthorized post-merge approval
         # Let a started job attempt fail-closed cleanup after normal cancellation.
         if: always() && steps.validate.outputs.result != 'true'
