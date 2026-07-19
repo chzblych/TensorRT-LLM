@@ -87,16 +87,13 @@ jobs:
             '.login == $login and .id == $id and .type == "User"' \
             <<<"$identity" >/dev/null
 
-          permission="$(
-            gh api "/repos/$TARGET_REPOSITORY/collaborators/$EXPECTED_ACTOR/permission"
-          )"
+          repository_access="$(gh api "/repos/$TARGET_REPOSITORY")"
           jq -e \
-            --arg login "$EXPECTED_ACTOR" \
-            --argjson id "$EXPECTED_ACTOR_ID" \
-            '.permission == "read" and .role_name == "triage" and
-             .user.login == $login and .user.id == $id and
-             .user.permissions.triage == true and .user.permissions.push == false' \
-            <<<"$permission" >/dev/null
+            --argjson repo_id "$TARGET_BASE_REPOSITORY_ID" \
+            '.id == $repo_id and .full_name == "NVIDIA/TensorRT-LLM" and
+             .permissions.triage == true and .permissions.pull == true and
+             .permissions.push == false and .permissions.admin == false' \
+            <<<"$repository_access" >/dev/null
 
           approved_membership="$(
             gh api "/orgs/NVIDIA/teams/trt-llm-ci-approvers/memberships/chzblych"
@@ -223,7 +220,7 @@ jobs:
           jq -n \
             --arg token_actor "$EXPECTED_ACTOR" \
             --argjson token_actor_id "$EXPECTED_ACTOR_ID" \
-            --arg role_name "$(jq -r '.role_name' <<<"$permission")" \
+            --arg role_name "triage (authenticated repository permissions)" \
             --arg approved_probe "chzblych:active" \
             --arg denied_probe "$EXPECTED_ACTOR:404" \
             --arg pr_url "$(jq -r '.html_url' <<<"$pr")" \
@@ -258,9 +255,7 @@ jobs:
             gh api "/repos/$TARGET_REPOSITORY/contents/$BOT_WORKFLOW_PATH?ref=main" --jq '.sha'
           )"
           identity="$(gh api /user)"
-          permission="$(
-            gh api "/repos/$TARGET_REPOSITORY/collaborators/$EXPECTED_ACTOR/permission"
-          )"
+          repository_access="$(gh api "/repos/$TARGET_REPOSITORY")"
 
           jq -e \
             --argjson id "$TARGET_PR_ID" \
@@ -281,8 +276,12 @@ jobs:
             --arg login "$EXPECTED_ACTOR" \
             --argjson id "$EXPECTED_ACTOR_ID" \
             '.login == $login and .id == $id' <<<"$identity" >/dev/null
-          jq -e '.role_name == "triage" and .user.permissions.triage == true' \
-            <<<"$permission" >/dev/null
+          jq -e \
+            --argjson repo_id "$TARGET_BASE_REPOSITORY_ID" \
+            '.id == $repo_id and .permissions.triage == true and
+             .permissions.pull == true and .permissions.push == false and
+             .permissions.admin == false' \
+            <<<"$repository_access" >/dev/null
           [[ "$guard_blob" == "$GUARD_WORKFLOW_BLOB_SHA" ]]
           [[ "$llm_api_blob" == "$LLM_API_WORKFLOW_BLOB_SHA" ]]
           [[ "$blossom_blob" == "$BLOSSOM_WORKFLOW_BLOB_SHA" ]]
