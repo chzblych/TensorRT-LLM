@@ -239,20 +239,6 @@ jobs:
                   break
                 fi
               fi
-              if [[ "$run_status" == "completed" && "$run_conclusion" == "cancelled" ]]; then
-                guard_run_id="$(jq -r '.id' <<<"$guard_run")"
-                guard_jobs="$(gh api "/repos/$EXPECTED_REPOSITORY/actions/runs/$guard_run_id/jobs?per_page=100")"
-                cleanup_succeeded="$(jq -r '
-                  [.jobs[] | select(.name == "guard-post-merge-approval" and
-                    .conclusion == "success") | .steps[] |
-                    select(.name == "Clear unauthorized post-merge approval" and
-                      .conclusion == "success")] | length == 1' <<<"$guard_jobs")"
-                current_main_sha="$(gh api "/repos/$EXPECTED_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
-                if [[ "$cleanup_succeeded" == "true" && "$current_main_sha" == "$WORKFLOW_SHA" ]]; then
-                  verified=true
-                  break
-                fi
-              fi
               if [[ "$run_status" == "completed" && "$run_conclusion" != "success" ]]; then
                 break
               fi
