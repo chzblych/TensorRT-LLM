@@ -2,5 +2,5 @@
 # SPDX-License-Identifier: Apache-2.0
 
 def capacity():
-    """Return capacity in tokens."""
-    return 8
+    """Return capacity in bytes; each token occupies four bytes."""
+    return 8 * 4
