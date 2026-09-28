@@ -19,36 +19,36 @@ jobs:
           script: |
             const assert = require('node:assert/strict');
             const repo = context.repo;
-            const {data: created} = await github.rest.checks.create({
-              ...repo, name: 'Isolated Check lifecycle probe', head_sha: context.sha,
-              status: 'in_progress', external_id: `probe:${context.runId}`,
-              output: {title: 'Testing Check API state transitions', summary: 'Isolated fork probe.'},
-            });
             const snapshots = [];
-            let passed = false;
-            try {
+            for (const patch of [{conclusion: null}, {conclusion: null, completed_at: null}]) {
               for (const conclusion of ['success', 'failure', 'neutral']) {
-                await github.rest.checks.update({...repo, check_run_id: created.id,
-                  status: 'completed', conclusion, completed_at: new Date().toISOString()});
-                await github.rest.checks.update({...repo, check_run_id: created.id,
-                  status: 'in_progress', external_id: `probe:${context.runId}:${conclusion}`,
-                  started_at: new Date().toISOString(),
-                  details_url: `https://github.com/${repo.owner}/${repo.repo}/actions/runs/${context.runId}`,
-                  output: {title: 'Waiting again', summary: 'No conclusion supplied in this PATCH.'}});
-                const {data: check} = await github.rest.checks.get({...repo, check_run_id: created.id});
-                snapshots.push({previous: conclusion, status: check.status,
-                  conclusion: check.conclusion, completed_at: check.completed_at,
-                  external_id: check.external_id, details_url: check.details_url});
-                assert.equal(check.status, 'in_progress');
-                assert.equal(check.conclusion, null);
-                assert.equal(check.completed_at, null);
+                const {data: created} = await github.rest.checks.create({
+                  ...repo, name: 'Isolated Check lifecycle probe', head_sha: context.sha,
+                  status: 'in_progress', output: {title: 'Waiting', summary: 'Isolated fork probe.'},
+                });
+                assert.equal(created.status, 'in_progress');
+                assert.equal(created.conclusion, null);
+                assert.equal(created.completed_at, null);
+                try {
+                  await github.rest.checks.update({...repo, check_run_id: created.id,
+                    status: 'completed', conclusion, completed_at: new Date().toISOString()});
+                  await github.rest.checks.update({...repo, check_run_id: created.id,
+                    ...patch, status: 'in_progress',
+                    output: {title: 'Waiting again', summary: '<!-- semantic-review-source:123 -->'},
+                    details_url: 'https://github.com/NVIDIA/TensorRT-LLM/pull/19621#issuecomment-5856818143'});
+                  const {data: check} = await github.rest.checks.get({...repo, check_run_id: created.id});
+                  snapshots.push({patch, previous: conclusion, check_id: check.id, status: check.status,
+                    conclusion: check.conclusion, completed_at: check.completed_at,
+                    details_url: check.details_url, output: check.output.summary});
+                } catch (error) {
+                  snapshots.push({patch, previous: conclusion, error: {status: error.status,
+                    message: error.message}});
+                } finally {
+                  await github.rest.checks.update({...repo, check_run_id: created.id,
+                    status: 'completed', conclusion: 'neutral',
+                    output: {title: 'Lifecycle observation complete', summary: 'Isolated API probe finished.'}});
+                }
               }
-              passed = true;
-            } finally {
-              await core.summary.addCodeBlock(JSON.stringify(snapshots, null, 2), 'json').write();
-              core.info(JSON.stringify(snapshots));
-              await github.rest.checks.update({...repo, check_run_id: created.id,
-                status: 'completed', conclusion: passed ? 'success' : 'failure',
-                output: {title: passed ? 'Lifecycle probe passed' : 'Lifecycle probe failed',
-                  summary: JSON.stringify(snapshots)}});
             }
+            await core.summary.addCodeBlock(JSON.stringify(snapshots, null, 2), 'json').write();
+            core.info(JSON.stringify(snapshots));
