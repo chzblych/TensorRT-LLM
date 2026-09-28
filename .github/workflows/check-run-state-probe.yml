@@ -22,7 +22,7 @@ jobs:
       - id: restore
         uses: actions/github-script@v8
         env:
-          EXPECTED_CURSOR: none
+          EXPECTED_CURSOR: 100
           CURSOR_PATH: ${{ runner.temp }}/cursor.json
         with:
           script: |
