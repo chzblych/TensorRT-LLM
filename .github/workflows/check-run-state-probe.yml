@@ -1,54 +1,111 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-
-name: Check run state API probe
+name: Semantic cursor persistence probe
 on:
   push:
     branches: [codex/check-run-state-probe]
 permissions:
   contents: read
-  checks: write
+  actions: read
+concurrency:
+  group: semantic-cursor-probe
+  cancel-in-progress: false
 jobs:
-  probe:
+  persist:
     if: github.repository == 'chzblych/TensorRT-LLM'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    outputs:
+      saved: ${{ steps.restore.outputs.saved }}
     steps:
-      - uses: actions/github-script@v8
+      - uses: actions/checkout@v6
+      - id: restore
+        uses: actions/github-script@v8
+        env:
+          EXPECTED_CURSOR: none
+          CURSOR_PATH: ${{ runner.temp }}/cursor.json
         with:
           script: |
             const assert = require('node:assert/strict');
-            const repo = context.repo;
-            const snapshots = [];
-            for (const patch of [{conclusion: null}, {conclusion: null, completed_at: null}]) {
-              for (const conclusion of ['success', 'failure', 'neutral']) {
-                const {data: created} = await github.rest.checks.create({
-                  ...repo, name: 'Isolated Check lifecycle probe', head_sha: context.sha,
-                  status: 'in_progress', output: {title: 'Waiting', summary: 'Isolated fork probe.'},
-                });
-                assert.equal(created.status, 'in_progress');
-                assert.equal(created.conclusion, null);
-                assert.equal(created.completed_at, null);
-                try {
-                  await github.rest.checks.update({...repo, check_run_id: created.id,
-                    status: 'completed', conclusion, completed_at: new Date().toISOString()});
-                  await github.rest.checks.update({...repo, check_run_id: created.id,
-                    ...patch, status: 'in_progress',
-                    output: {title: 'Waiting again', summary: '<!-- semantic-review-source:123 -->'},
-                    details_url: 'https://github.com/NVIDIA/TensorRT-LLM/pull/19621#issuecomment-5856818143'});
-                  const {data: check} = await github.rest.checks.get({...repo, check_run_id: created.id});
-                  snapshots.push({patch, previous: conclusion, check_id: check.id, status: check.status,
-                    conclusion: check.conclusion, completed_at: check.completed_at,
-                    details_url: check.details_url, output: check.output.summary});
-                } catch (error) {
-                  snapshots.push({patch, previous: conclusion, error: {status: error.status,
-                    message: error.message}});
-                } finally {
-                  await github.rest.checks.update({...repo, check_run_id: created.id,
-                    status: 'completed', conclusion: 'neutral',
-                    output: {title: 'Lifecycle observation complete', summary: 'Isolated API probe finished.'}});
-                }
-              }
-            }
-            await core.summary.addCodeBlock(JSON.stringify(snapshots, null, 2), 'json').write();
-            core.info(JSON.stringify(snapshots));
+            const {writeFileSync} = require('node:fs');
+            const {restoreCursor} = require('./.github/scripts/semantic_review_cursor.js');
+            // Personal-fork quota is below the production reserve; quota behavior is unit-tested.
+            const client = {rest: {...github.rest, rateLimit: {get: async () =>
+              ({data: {resources: {core: {remaining: 5000}}}})}},
+              paginate: github.paginate, hook: {before() {}, after() {}, remove() {}}};
+            const scheduled = {...context, eventName: 'schedule'};
+            assert.equal(await restoreCursor({github: client, context: scheduled}), undefined,
+              'A push workflow must not supply a production cursor.');
+            const getRun = github.rest.actions.getWorkflowRun;
+            github.rest.actions.getWorkflowRun = async args => {
+              const response = await getRun(args);
+              assert.equal(response.data.event, 'push');
+              assert.equal(response.data.path.split('@')[0], '.github/workflows/check-run-state-probe.yml');
+              // Only the originating event/path are simulated; storage and quota APIs are real.
+              response.data.event = 'schedule';
+              response.data.path = '.github/workflows/semantic-review.yml';
+              return response;
+            };
+            const previous = await restoreCursor({github: client, context: scheduled});
+            assert.equal(previous, process.env.EXPECTED_CURSOR === 'none' ?
+              undefined : Number(process.env.EXPECTED_CURSOR));
+            const saved = previous === undefined ? 100 : previous - 1;
+            writeFileSync(process.env.CURSOR_PATH, JSON.stringify({last_pr: saved}));
+            core.setOutput('saved', saved);
+            core.info(`Native artifact restore verified: ${previous ?? 'initial'} -> ${saved}.`);
+      - uses: actions/upload-artifact@v7
+        with:
+          name: semantic-review-cursor
+          path: ${{ runner.temp }}/cursor.json
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: true
+
+  failed-save:
+    if: github.repository == 'chzblych/TensorRT-LLM'
+    runs-on: ubuntu-latest
+    outputs:
+      jobs: ${{ steps.save_cursor.outcome == 'success' && steps.select.outputs.jobs || '' }}
+    steps:
+      - id: select
+        uses: actions/github-script@v8
+        with:
+          script: |
+            core.setOutput('jobs', JSON.stringify([{number: 100, allowRequest: true}]));
+      - id: save_cursor
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: expected-missing-cursor-probe
+          path: ${{ runner.temp }}/intentionally-missing-cursor.json
+          if-no-files-found: error
+
+  verify:
+    needs: [persist, failed-save]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/github-script@v8
+        env:
+          EXPECTED_CURSOR: ${{ needs.persist.outputs.saved }}
+          FAILED_SAVE_JOBS: ${{ needs.failed-save.outputs.jobs }}
+        with:
+          script: |
+            const assert = require('node:assert/strict');
+            const {restoreCursor} = require('./.github/scripts/semantic_review_cursor.js');
+            // Personal-fork quota is below the production reserve; quota behavior is unit-tested.
+            const client = {rest: {...github.rest, rateLimit: {get: async () =>
+              ({data: {resources: {core: {remaining: 5000}}}})}},
+              paginate: github.paginate, hook: {before() {}, after() {}, remove() {}}};
+            assert.equal(process.env.FAILED_SAVE_JOBS, '', 'A failed save must not dispatch jobs.');
+            const getRun = github.rest.actions.getWorkflowRun;
+            github.rest.actions.getWorkflowRun = async args => {
+              const response = await getRun(args);
+              assert.equal(response.data.event, 'push');
+              assert.equal(response.data.path.split('@')[0], '.github/workflows/check-run-state-probe.yml');
+              response.data.event = 'schedule';
+              response.data.path = '.github/workflows/semantic-review.yml';
+              return response;
+            };
+            const cursor = await restoreCursor({github: client, context: {...context, eventName: 'schedule'}});
+            assert.equal(cursor, Number(process.env.EXPECTED_CURSOR));
+            core.info(`Native saved cursor read back as PR #${cursor}; failed-save dispatch is empty.`);
