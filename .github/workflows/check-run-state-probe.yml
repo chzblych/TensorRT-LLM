@@ -32,7 +32,8 @@ jobs:
                   status: 'completed', conclusion, completed_at: new Date().toISOString()});
                 await github.rest.checks.update({...repo, check_run_id: created.id,
                   status: 'in_progress', external_id: `probe:${context.runId}:${conclusion}`,
-                  started_at: new Date().toISOString(), details_url: '',
+                  started_at: new Date().toISOString(),
+                  details_url: `https://github.com/${repo.owner}/${repo.repo}/actions/runs/${context.runId}`,
                   output: {title: 'Waiting again', summary: 'No conclusion supplied in this PATCH.'}});
                 const {data: check} = await github.rest.checks.get({...repo, check_run_id: created.id});
                 snapshots.push({previous: conclusion, status: check.status,
