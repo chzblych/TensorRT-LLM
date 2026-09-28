@@ -33,7 +33,7 @@ jobs:
             const client = {rest: {...github.rest, rateLimit: {get: async () =>
               ({data: {resources: {core: {remaining: 5000}}}})}},
               paginate: github.paginate, hook: {before() {}, after() {}, remove() {}}};
-            const scheduled = {...context, eventName: 'schedule'};
+            const scheduled = {...context, repo: context.repo, eventName: 'schedule'};
             assert.deepEqual(await restoreCursor({github: client, context: scheduled}),
               {nextArtifact: 'semantic-review-cursor'},
               'A push workflow must not supply a production cursor.');
@@ -116,7 +116,7 @@ jobs:
               return response;
             };
             const {cursor, nextArtifact} = await restoreCursor({github: client,
-              context: {...context, eventName: 'schedule'}});
+              context: {...context, repo: context.repo, eventName: 'schedule'}});
             assert.equal(cursor, Number(process.env.EXPECTED_CURSOR));
             assert.equal(nextArtifact, process.env.SAVED_ARTIFACT === 'semantic-review-cursor' ?
               'semantic-review-cursor-next' : 'semantic-review-cursor');
