@@ -16,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       saved: ${{ steps.restore.outputs.saved }}
+      artifact: ${{ steps.restore.outputs.artifact }}
     steps:
       - uses: actions/checkout@v6
       - id: restore
@@ -33,28 +34,32 @@ jobs:
               ({data: {resources: {core: {remaining: 5000}}}})}},
               paginate: github.paginate, hook: {before() {}, after() {}, remove() {}}};
             const scheduled = {...context, eventName: 'schedule'};
-            assert.equal(await restoreCursor({github: client, context: scheduled}), undefined,
+            assert.deepEqual(await restoreCursor({github: client, context: scheduled}),
+              {nextArtifact: 'semantic-review-cursor'},
               'A push workflow must not supply a production cursor.');
             const getRun = github.rest.actions.getWorkflowRun;
             github.rest.actions.getWorkflowRun = async args => {
               const response = await getRun(args);
               assert.equal(response.data.event, 'push');
               assert.equal(response.data.path.split('@')[0], '.github/workflows/check-run-state-probe.yml');
-              // Only the originating event/path are simulated; storage and quota APIs are real.
+              // The event/path and personal-fork quota are simulated; artifact storage APIs are real.
               response.data.event = 'schedule';
               response.data.path = '.github/workflows/semantic-review.yml';
               return response;
             };
-            const previous = await restoreCursor({github: client, context: scheduled});
+            const {cursor: previous, nextArtifact} = await restoreCursor({github: client, context: scheduled});
             assert.equal(previous, process.env.EXPECTED_CURSOR === 'none' ?
               undefined : Number(process.env.EXPECTED_CURSOR));
+            assert.equal(nextArtifact, previous === undefined ?
+              'semantic-review-cursor' : 'semantic-review-cursor-next');
             const saved = previous === undefined ? 100 : previous - 1;
             writeFileSync(process.env.CURSOR_PATH, JSON.stringify({last_pr: saved}));
             core.setOutput('saved', saved);
-            core.info(`Native artifact restore verified: ${previous ?? 'initial'} -> ${saved}.`);
+            core.setOutput('artifact', nextArtifact);
+            core.info(`Native artifact restore verified: ${previous ?? 'initial'} -> ${saved}; save ${nextArtifact}.`);
       - uses: actions/upload-artifact@v7
         with:
-          name: semantic-review-cursor
+          name: ${{ steps.restore.outputs.artifact }}
           path: ${{ runner.temp }}/cursor.json
           if-no-files-found: error
           retention-days: 90
@@ -65,6 +70,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       jobs: ${{ steps.save_cursor.outcome == 'success' && steps.select.outputs.jobs || '' }}
+      outcome: ${{ steps.save_cursor.outcome }}
     steps:
       - id: select
         uses: actions/github-script@v8
@@ -87,7 +93,9 @@ jobs:
       - uses: actions/github-script@v8
         env:
           EXPECTED_CURSOR: ${{ needs.persist.outputs.saved }}
+          SAVED_ARTIFACT: ${{ needs.persist.outputs.artifact }}
           FAILED_SAVE_JOBS: ${{ needs.failed-save.outputs.jobs }}
+          FAILED_SAVE_OUTCOME: ${{ needs.failed-save.outputs.outcome }}
         with:
           script: |
             const assert = require('node:assert/strict');
@@ -97,6 +105,7 @@ jobs:
               ({data: {resources: {core: {remaining: 5000}}}})}},
               paginate: github.paginate, hook: {before() {}, after() {}, remove() {}}};
             assert.equal(process.env.FAILED_SAVE_JOBS, '', 'A failed save must not dispatch jobs.');
+            assert.equal(process.env.FAILED_SAVE_OUTCOME, 'failure', 'The native missing-file upload must fail.');
             const getRun = github.rest.actions.getWorkflowRun;
             github.rest.actions.getWorkflowRun = async args => {
               const response = await getRun(args);
@@ -106,6 +115,9 @@ jobs:
               response.data.path = '.github/workflows/semantic-review.yml';
               return response;
             };
-            const cursor = await restoreCursor({github: client, context: {...context, eventName: 'schedule'}});
+            const {cursor, nextArtifact} = await restoreCursor({github: client,
+              context: {...context, eventName: 'schedule'}});
             assert.equal(cursor, Number(process.env.EXPECTED_CURSOR));
-            core.info(`Native saved cursor read back as PR #${cursor}; failed-save dispatch is empty.`);
+            assert.equal(nextArtifact, process.env.SAVED_ARTIFACT === 'semantic-review-cursor' ?
+              'semantic-review-cursor-next' : 'semantic-review-cursor');
+            core.info(`Native saved cursor read back as PR #${cursor}; next save uses ${nextArtifact}; failed-save dispatch is empty.`);
