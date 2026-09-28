@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Check run state API probe
+on:
+  push:
+    branches: [codex/check-run-state-probe]
+permissions:
+  contents: read
+  checks: write
+jobs:
+  probe:
+    if: github.repository == 'chzblych/TensorRT-LLM'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const assert = require('node:assert/strict');
+            const repo = context.repo;
+            const {data: created} = await github.rest.checks.create({
+              ...repo, name: 'Isolated Check lifecycle probe', head_sha: context.sha,
+              status: 'in_progress', external_id: `probe:${context.runId}`,
+              output: {title: 'Testing Check API state transitions', summary: 'Isolated fork probe.'},
+            });
+            const snapshots = [];
+            let passed = false;
+            try {
+              for (const conclusion of ['success', 'failure', 'neutral']) {
+                await github.rest.checks.update({...repo, check_run_id: created.id,
+                  status: 'completed', conclusion, completed_at: new Date().toISOString()});
+                await github.rest.checks.update({...repo, check_run_id: created.id,
+                  status: 'in_progress', external_id: `probe:${context.runId}:${conclusion}`,
+                  started_at: new Date().toISOString(), details_url: '',
+                  output: {title: 'Waiting again', summary: 'No conclusion supplied in this PATCH.'}});
+                const {data: check} = await github.rest.checks.get({...repo, check_run_id: created.id});
+                snapshots.push({previous: conclusion, status: check.status,
+                  conclusion: check.conclusion, completed_at: check.completed_at,
+                  external_id: check.external_id, details_url: check.details_url});
+                assert.equal(check.status, 'in_progress');
+                assert.equal(check.conclusion, null);
+                assert.equal(check.completed_at, null);
+              }
+              passed = true;
+            } finally {
+              await core.summary.addCodeBlock(JSON.stringify(snapshots, null, 2), 'json').write();
+              core.info(JSON.stringify(snapshots));
+              await github.rest.checks.update({...repo, check_run_id: created.id,
+                status: 'completed', conclusion: passed ? 'success' : 'failure',
+                output: {title: passed ? 'Lifecycle probe passed' : 'Lifecycle probe failed',
+                  summary: JSON.stringify(snapshots)}});
+            }
