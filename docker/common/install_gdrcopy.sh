@@ -24,6 +24,7 @@ fi
 # Match GDRCopy in the NGC PyTorch 26.09 base images.
 GDRCOPY_VERSION=2.5.1
 ARCH=$(uname -m)
+# TODO: Add an internal CI mirror after verifying the pinned 2.5.1 DEB/RPM packages.
 DOWNLOAD_ROOT="https://developer.download.nvidia.com/compute/redist/gdrcopy/CUDA%2013.0"
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "${WORK_DIR}"' EXIT

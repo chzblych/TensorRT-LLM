@@ -7,7 +7,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Authenticate the github.com clone below; no-op when no token is available.
 source "${SCRIPT_DIR}/github_auth.sh"
 
-LIBFABRIC_VERSION="v1.21.0"
+# Build-only ABI baseline; the EFA installer supplies the runtime libfabric.
+LIBFABRIC_BUILD_VERSION="v1.21.0"
+# Source-build fallback from NIXL v1.5.2's manylinux dependency set.
 HWLOC_VERSION=2.12.2
 NIXL_VERSION="v1.5.2"
 
@@ -20,11 +22,11 @@ HWLOC_INSTALL_PATH="/usr/local/mpi"
 # Build against the oldest supported libfabric ABI, independently of the runtime EFA installation.
 build_libfabric_for_nixl() {
     wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
-        "${GITHUB_URL}/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -O libfabric.tar.bz2
+        "${GITHUB_URL}/ofiwg/libfabric/releases/download/${LIBFABRIC_BUILD_VERSION}/libfabric-${LIBFABRIC_BUILD_VERSION#v}.tar.bz2" -O libfabric.tar.bz2
     tar xjf libfabric.tar.bz2 && rm libfabric.tar.bz2
-    cd "libfabric-${LIBFABRIC_VERSION#v}"
+    cd "libfabric-${LIBFABRIC_BUILD_VERSION#v}"
     ./autogen.sh
-    ./configure --prefix="${LIBFABRIC_INSTALL_PATH}" \
+    ./configure --prefix="${LIBFABRIC_BUILD_PATH}" \
                 --disable-verbs \
                 --disable-psm3 \
                 --disable-opx \
@@ -38,7 +40,7 @@ build_libfabric_for_nixl() {
     make -j"${NPROC:-$(nproc)}"
     make install
     cd ../
-    rm -rf "libfabric-${LIBFABRIC_VERSION#v}"
+    rm -rf "libfabric-${LIBFABRIC_BUILD_VERSION#v}"
 }
 
 prepare_hwloc() {
@@ -51,6 +53,7 @@ prepare_hwloc() {
     fi
     # NIXL's LIBFABRIC topology code uses NUMA APIs added in hwloc 2.3.
     # Keep a suitable bundled/system hwloc; EL8's 2.2 package cannot compile this code.
+    # Non-NGC Ubuntu 24.04/SBSA reuses system hwloc 2.10 when its development files are present.
     if ! pkg-config --atleast-version=2.3 hwloc; then
         curl --connect-timeout 30 --max-time 300 --retry 3 --retry-delay 2 \
             -fsSL "https://download.open-mpi.org/release/hwloc/v${HWLOC_VERSION%.*}/hwloc-${HWLOC_VERSION}.tar.gz" \
@@ -101,7 +104,7 @@ build_and_install_nixl() {
     # This build-only prefix is removed on exit; runtime libfabric comes from the image or host.
     meson setup builddir \
         -Ducx_path=$UCX_INSTALL_PATH \
-        -Dlibfabric_path="${LIBFABRIC_INSTALL_PATH}" \
+        -Dlibfabric_path="${LIBFABRIC_BUILD_PATH}" \
         -Dcudapath_lib="$CUDA_PATH/lib64" \
         -Dcudapath_inc="$CUDA_PATH/include" \
         -Dgds_path="$GDS_PATH" \
@@ -147,7 +150,7 @@ EOF
 # Keep build-only libfabric until NIXL is installed; hwloc is retained outside this workspace.
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "${WORK_DIR}"' EXIT
-LIBFABRIC_INSTALL_PATH="${WORK_DIR}/libfabric"
+LIBFABRIC_BUILD_PATH="${WORK_DIR}/libfabric"
 cd "${WORK_DIR}"
 
 build_libfabric_for_nixl

@@ -5,6 +5,7 @@ set -ex
 
 # Install the EFA userspace stack on the supported container bases.
 . /etc/os-release
+# NGC PyTorch 26.09 bundles EFA under /opt/amazon/efa/lib; Rocky RPMs use lib64.
 case "${ID}:${VERSION_ID}" in
     ubuntu:*) EFA_LIB_DIR=/opt/amazon/efa/lib ;;
     rocky:8*) EFA_LIB_DIR=/opt/amazon/efa/lib64 ;;
@@ -34,7 +35,9 @@ if [ "${ID}" = ubuntu ]; then
     # --build-ngc handles userspace-only installation for Ubuntu containers.
     ./efa_installer.sh --skip-mpi --skip-rdma-core --build-ngc
 else
-    # Rocky uses standard RPMs; skip host setup and the unrelated NCCL plugin.
+    # Mirror --build-ngc's unattended setup and skip kernel modules, host limits and device checks.
+    # The standard RPM dependency installation still runs on Rocky.
+    # Preserve MPI/rdma-core and skip the unrelated NCCL plugin.
     # The installer selects top-level DKMS RPMs even with --skip-kmod.
     rm -f "RPMS/ROCKYLINUX8/$(uname -m)"/dkms-*.rpm
     ./efa_installer.sh --yes --skip-kmod --skip-limit-conf --no-verify \
