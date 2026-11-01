@@ -7,136 +7,149 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Authenticate the github.com clone below; no-op when no token is available.
 source "${SCRIPT_DIR}/github_auth.sh"
 
+LIBFABRIC_VERSION="v1.21.0"
+HWLOC_VERSION=2.12.2
+NIXL_VERSION="v1.5.2"
+
 GITHUB_URL="${GITHUB_MIRROR:-https://github.com}"
+NIXL_REPO="https://github.com/ai-dynamo/nixl.git"
+CUDA_PATH="/usr/local/cuda"
 UCX_INSTALL_PATH="/usr/local/ucx/"
+HWLOC_INSTALL_PATH="/usr/local/mpi"
 
 # Build against the oldest supported libfabric ABI, independently of the runtime EFA installation.
-# Keep the sources and build-only libraries isolated from the caller's working directory.
-WORK_DIR=$(mktemp -d)
-trap 'rm -rf "${WORK_DIR}"' EXIT
-cd "${WORK_DIR}"
-LIBFABRIC_VERSION="v1.21.0"
-LIBFABRIC_INSTALL_PATH="${WORK_DIR}/libfabric"
-wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
-    "${GITHUB_URL}/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -O libfabric.tar.bz2
-tar xjf libfabric.tar.bz2 && rm libfabric.tar.bz2
-cd "libfabric-${LIBFABRIC_VERSION#v}"
-./autogen.sh
-./configure --prefix="${LIBFABRIC_INSTALL_PATH}" \
-            --disable-verbs \
-            --disable-psm3 \
-            --disable-opx \
-            --disable-usnic \
-            --disable-rstream \
-            --enable-efa \
-            --with-cuda=/usr/local/cuda \
-            --enable-cuda-dlopen \
-            --with-gdrcopy \
-            --enable-gdrcopy-dlopen
-make -j"${NPROC:-$(nproc)}"
-make install
-cd ../
-rm -rf "libfabric-${LIBFABRIC_VERSION#v}"
-
-# NGC PyTorch's default Open MPI comes from HPC-X and is exposed at /usr/local/mpi.
-# Reuse the hwloc bundled with that MPI installation for the EFA plugin.
-HWLOC_INSTALL_PATH="/usr/local/mpi"
-if [[ -f "${HWLOC_INSTALL_PATH}/include/hwloc.h" &&
-      -f "${HWLOC_INSTALL_PATH}/lib/libhwloc.so" &&
-      -f "${HWLOC_INSTALL_PATH}/lib/pkgconfig/hwloc.pc" ]]; then
-    export PKG_CONFIG_PATH="${HWLOC_INSTALL_PATH}/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
-fi
-# NIXL's LIBFABRIC topology code uses NUMA APIs added in hwloc 2.3.
-# Keep a suitable bundled/system hwloc; EL8's 2.2 package cannot compile this code.
-if ! pkg-config --atleast-version=2.3 hwloc; then
-    HWLOC_VERSION=2.12.2
-    curl --connect-timeout 30 --max-time 300 --retry 3 --retry-delay 2 \
-        -fsSL "https://download.open-mpi.org/release/hwloc/v${HWLOC_VERSION%.*}/hwloc-${HWLOC_VERSION}.tar.gz" \
-        -o hwloc.tar.gz
-    tar -xzf hwloc.tar.gz
-    cd "hwloc-${HWLOC_VERSION}"
-    # Match NIXL's manylinux dependency; retain it for runtime as well as compilation.
-    ./configure --prefix=/usr/local --libdir=/usr/local/lib --disable-nvml
+build_libfabric_for_nixl() {
+    wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
+        "${GITHUB_URL}/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -O libfabric.tar.bz2
+    tar xjf libfabric.tar.bz2 && rm libfabric.tar.bz2
+    cd "libfabric-${LIBFABRIC_VERSION#v}"
+    ./autogen.sh
+    ./configure --prefix="${LIBFABRIC_INSTALL_PATH}" \
+                --disable-verbs \
+                --disable-psm3 \
+                --disable-opx \
+                --disable-usnic \
+                --disable-rstream \
+                --enable-efa \
+                --with-cuda="$CUDA_PATH" \
+                --enable-cuda-dlopen \
+                --with-gdrcopy \
+                --enable-gdrcopy-dlopen
     make -j"${NPROC:-$(nproc)}"
     make install
-    cd ..
-    rm -rf "hwloc-${HWLOC_VERSION}" hwloc.tar.gz
-    export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
-    # libhwloc.so.15 also exists in EL8's system directories. Prefer the new API at runtime.
-    printf '%s\n' /usr/local/lib > /etc/ld.so.conf.d/000_nixl_hwloc.conf
-    ldconfig
-fi
-CUDA_PATH="/usr/local/cuda"
-NIXL_VERSION="v1.5.2"
-NIXL_REPO="https://github.com/ai-dynamo/nixl.git"
-OLD_LD_LIBRARY_PATH=$LD_LIBRARY_PATH
+    cd ../
+    rm -rf "libfabric-${LIBFABRIC_VERSION#v}"
+}
 
-ARCH_NAME="x86_64-linux-gnu"
-GDS_PATH="$CUDA_PATH/targets/x86_64-linux"
-if [ "$(uname -m)" != "amd64" ] && [ "$(uname -m)" != "x86_64" ]; then
-  ARCH_NAME="aarch64-linux-gnu"
-  GDS_PATH="$CUDA_PATH/targets/sbsa-linux"
-fi
+prepare_hwloc() {
+    # NGC PyTorch's default Open MPI comes from HPC-X and is exposed at /usr/local/mpi.
+    # Reuse the hwloc bundled with that MPI installation for the EFA plugin.
+    if [[ -f "${HWLOC_INSTALL_PATH}/include/hwloc.h" &&
+          -f "${HWLOC_INSTALL_PATH}/lib/libhwloc.so" &&
+          -f "${HWLOC_INSTALL_PATH}/lib/pkgconfig/hwloc.pc" ]]; then
+        export PKG_CONFIG_PATH="${HWLOC_INSTALL_PATH}/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
+    fi
+    # NIXL's LIBFABRIC topology code uses NUMA APIs added in hwloc 2.3.
+    # Keep a suitable bundled/system hwloc; EL8's 2.2 package cannot compile this code.
+    if ! pkg-config --atleast-version=2.3 hwloc; then
+        curl --connect-timeout 30 --max-time 300 --retry 3 --retry-delay 2 \
+            -fsSL "https://download.open-mpi.org/release/hwloc/v${HWLOC_VERSION%.*}/hwloc-${HWLOC_VERSION}.tar.gz" \
+            -o hwloc.tar.gz
+        tar -xzf hwloc.tar.gz
+        cd "hwloc-${HWLOC_VERSION}"
+        # Match NIXL's manylinux dependency; retain it for runtime as well as compilation.
+        ./configure --prefix=/usr/local --libdir=/usr/local/lib --disable-nvml
+        make -j"${NPROC:-$(nproc)}"
+        make install
+        cd ..
+        rm -rf "hwloc-${HWLOC_VERSION}" hwloc.tar.gz
+        export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
+        # libhwloc.so.15 also exists in EL8's system directories. Prefer the new API at runtime.
+        printf '%s\n' /usr/local/lib > /etc/ld.so.conf.d/000_nixl_hwloc.conf
+        ldconfig
+    fi
+}
 
-if [ -n "${GITHUB_MIRROR}" ]; then
-  export PIP_INDEX_URL="https://artifactory.pdx.nvidia.com/artifactory/api/pypi/pypi-remote/simple"
-fi
-pip3 install meson ninja pybind11 setuptools
+build_and_install_nixl() {
+    OLD_LD_LIBRARY_PATH=$LD_LIBRARY_PATH
 
-git clone --depth 1 -b ${NIXL_VERSION} ${NIXL_REPO}
-cd nixl
+    ARCH_NAME="x86_64-linux-gnu"
+    GDS_PATH="$CUDA_PATH/targets/x86_64-linux"
+    if [ "$(uname -m)" != "amd64" ] && [ "$(uname -m)" != "x86_64" ]; then
+        ARCH_NAME="aarch64-linux-gnu"
+        GDS_PATH="$CUDA_PATH/targets/sbsa-linux"
+    fi
 
-CUDA_SO_PATH=$(find "/usr/local" -name "libcuda.so.1" 2>/dev/null | head -n1)
+    if [ -n "${GITHUB_MIRROR}" ]; then
+        export PIP_INDEX_URL="https://artifactory.pdx.nvidia.com/artifactory/api/pypi/pypi-remote/simple"
+    fi
+    pip3 install meson ninja pybind11 setuptools
 
-if [[ -z "$CUDA_SO_PATH" ]]; then
-    echo "libcuda.so.1 not found"
-    exit 1
-fi
+    git clone --depth 1 -b ${NIXL_VERSION} ${NIXL_REPO}
+    cd nixl
 
-CUDA_SO_PATH=$(dirname $CUDA_SO_PATH)
+    CUDA_SO_PATH=$(find "/usr/local" -name "libcuda.so.1" 2>/dev/null | head -n1)
 
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CUDA_SO_PATH
-# This build-only prefix is removed on exit; runtime libfabric comes from the image or host.
-meson setup builddir \
-    -Ducx_path=$UCX_INSTALL_PATH \
-    -Dlibfabric_path="${LIBFABRIC_INSTALL_PATH}" \
-    -Dcudapath_lib="$CUDA_PATH/lib64" \
-    -Dcudapath_inc="$CUDA_PATH/include" \
-    -Dgds_path="$GDS_PATH" \
-    -Dinstall_headers=true \
-    -Ddisable_plugins=POSIX \
-    -Dbuild_tests=false \
-    -Dbuild_examples=false \
-    --buildtype=release
+    if [[ -z "$CUDA_SO_PATH" ]]; then
+        echo "libcuda.so.1 not found"
+        exit 1
+    fi
 
-cd builddir && ninja install
-# Meson uses dist-packages on Ubuntu and versioned site-packages on Rocky.
-NIXL_PYTHON_PATH=$(meson introspect --installed | python3 -c '
+    CUDA_SO_PATH=$(dirname $CUDA_SO_PATH)
+
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CUDA_SO_PATH
+    # This build-only prefix is removed on exit; runtime libfabric comes from the image or host.
+    meson setup builddir \
+        -Ducx_path=$UCX_INSTALL_PATH \
+        -Dlibfabric_path="${LIBFABRIC_INSTALL_PATH}" \
+        -Dcudapath_lib="$CUDA_PATH/lib64" \
+        -Dcudapath_inc="$CUDA_PATH/include" \
+        -Dgds_path="$GDS_PATH" \
+        -Dinstall_headers=true \
+        -Ddisable_plugins=POSIX \
+        -Dbuild_tests=false \
+        -Dbuild_examples=false \
+        --buildtype=release
+
+    cd builddir && ninja install
+    # Meson uses dist-packages on Ubuntu and versioned site-packages on Rocky.
+    NIXL_PYTHON_PATH=$(meson introspect --installed | python3 -c '
 import json, pathlib, sys
 paths = {str(pathlib.Path(p).parent.parent) for p in json.load(sys.stdin).values()
          if pathlib.Path(p).parent.name == "nixl_cu13" and pathlib.Path(p).name.startswith("_bindings.")}
 assert len(paths) == 1, paths
 print(paths.pop())
-')
-cd ../..
-rm -rf nixl  # Remove NIXL source tree to save space
-export LD_LIBRARY_PATH=$OLD_LD_LIBRARY_PATH
+    ')
+    cd ../..
+    rm -rf nixl  # Remove NIXL source tree to save space
+    export LD_LIBRARY_PATH=$OLD_LD_LIBRARY_PATH
 
-# Consumers import `nixl`, but the build above installs the backend as
-# `nixl_cu13`. Install the dispatching shim with --no-deps: the backend it would
-# otherwise pull from PyPI bundles a second UCX, which segfaults alongside the
-# one torch already links.
-pip3 install --no-deps "nixl==${NIXL_VERSION#v}"
+    # Consumers import `nixl`, but the build above installs the backend as
+    # `nixl_cu13`. Install the dispatching shim with --no-deps: the backend it would
+    # otherwise pull from PyPI bundles a second UCX, which segfaults alongside the
+    # one torch already links.
+    pip3 install --no-deps "nixl==${NIXL_VERSION#v}"
 
-echo "export LD_LIBRARY_PATH=/opt/nvidia/nvda_nixl/lib/${ARCH_NAME}:/opt/nvidia/nvda_nixl/lib64:\$LD_LIBRARY_PATH" >> "${ENV}"
-# The bindings are outside Python's default search path, so the shim needs PYTHONPATH. This takes
-# precedence over the PyPI backend that requirements-dev.txt installs into the test
-# environments, so keep that pin in step with NIXL_VERSION above -- otherwise the wheel is
-# installed and silently never used.
-# Prepend only once: ${ENV} is sourced again by every nested shell.
-cat >> "${ENV}" <<EOF
+    echo "export LD_LIBRARY_PATH=/opt/nvidia/nvda_nixl/lib/${ARCH_NAME}:/opt/nvidia/nvda_nixl/lib64:\$LD_LIBRARY_PATH" >> "${ENV}"
+    # The bindings are outside Python's default search path, so the shim needs PYTHONPATH. This takes
+    # precedence over the PyPI backend that requirements-dev.txt installs into the test
+    # environments, so keep that pin in step with NIXL_VERSION above -- otherwise the wheel is
+    # installed and silently never used.
+    # Prepend only once: ${ENV} is sourced again by every nested shell.
+    cat >> "${ENV}" <<EOF
 case ":\${PYTHONPATH:-}:" in
   *":${NIXL_PYTHON_PATH}:"*) ;;
   *) export PYTHONPATH="${NIXL_PYTHON_PATH}\${PYTHONPATH:+:\${PYTHONPATH}}" ;;
 esac
 EOF
+}
+
+# Keep build-only libfabric until NIXL is installed; hwloc is retained outside this workspace.
+WORK_DIR=$(mktemp -d)
+trap 'rm -rf "${WORK_DIR}"' EXIT
+LIBFABRIC_INSTALL_PATH="${WORK_DIR}/libfabric"
+cd "${WORK_DIR}"
+
+build_libfabric_for_nixl
+prepare_hwloc
+build_and_install_nixl
