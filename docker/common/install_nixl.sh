@@ -51,9 +51,11 @@ prepare_hwloc() {
           -f "${HWLOC_INSTALL_PATH}/lib/pkgconfig/hwloc.pc" ]]; then
         export PKG_CONFIG_PATH="${HWLOC_INSTALL_PATH}/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
     fi
-    # NIXL's LIBFABRIC topology code uses NUMA APIs added in hwloc 2.3.
-    # Keep a suitable bundled/system hwloc; EL8's 2.2 package cannot compile this code.
-    # Non-NGC Ubuntu 24.04/SBSA reuses system hwloc 2.10 when its development files are present.
+    # The LIBFABRIC plugin requires hwloc >= 2.3. For the current base images:
+    # - NGC PyTorch: reuse bundled HPC-X hwloc 2.7.1 without rebuilding.
+    # - Non-NGC SBSA Ubuntu 24.04: reuse system hwloc 2.10.0 without rebuilding.
+    # - Rocky 8: system hwloc 2.2.0 is too old, so build the fallback below.
+    # Missing hwloc development files also trigger this fallback on any image.
     if ! pkg-config --atleast-version=2.3 hwloc; then
         curl --connect-timeout 30 --max-time 300 --retry 3 --retry-delay 2 \
             -fsSL "https://download.open-mpi.org/release/hwloc/v${HWLOC_VERSION%.*}/hwloc-${HWLOC_VERSION}.tar.gz" \
