@@ -31,3 +31,7 @@ apt-get update
 # --build-ngc: unattended EFA userspace setup without host driver installation,
 #              device verification, limit configuration or dependency replacement.
 ./efa_installer.sh --skip-mpi --skip-rdma-core --build-ngc
+
+# Prefer the EFA runtime over an older distribution libfabric in the loader cache.
+printf '%s\n' /opt/amazon/efa/lib > /etc/ld.so.conf.d/000_efa.conf
+ldconfig

@@ -41,7 +41,12 @@ pip3() {
 git() { printf '%s\n' "$@" > "$GIT_ARGS"; mkdir nixl; }
 find() { printf '%s\n' /usr/local/cuda/lib64/libcuda.so.1; }
 uname() { echo "$TEST_ARCH"; }
+pkg-config() { return 0; }
 meson() {
+    if [ "$1" = introspect ]; then
+        printf '%s\n' '{"_bindings.so": "/opt/nvidia/nvda_nixl/lib/python3/dist-packages/nixl_cu13/_bindings.so"}'
+        return
+    fi
     printf '%s\n' "$@" > "$MESON_ARGS"
     if [ -n "$PKG_CONFIG_PATH" ]; then
         printf '%s' "$PKG_CONFIG_PATH" > "$MESON_PKG_CONFIG_PATH"

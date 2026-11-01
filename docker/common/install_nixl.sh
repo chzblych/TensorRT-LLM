@@ -46,6 +46,26 @@ if [[ -f "${HWLOC_INSTALL_PATH}/include/hwloc.h" &&
       -f "${HWLOC_INSTALL_PATH}/lib/pkgconfig/hwloc.pc" ]]; then
     export PKG_CONFIG_PATH="${HWLOC_INSTALL_PATH}/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
 fi
+# NIXL's LIBFABRIC topology code uses NUMA APIs added in hwloc 2.3.
+# Keep a suitable bundled/system hwloc; EL8's 2.2 package cannot compile this code.
+if ! pkg-config --atleast-version=2.3 hwloc; then
+    HWLOC_VERSION=2.12.2
+    curl --connect-timeout 30 --max-time 300 --retry 3 --retry-delay 2 \
+        -fsSL "https://download.open-mpi.org/release/hwloc/v${HWLOC_VERSION%.*}/hwloc-${HWLOC_VERSION}.tar.gz" \
+        -o hwloc.tar.gz
+    tar -xzf hwloc.tar.gz
+    cd "hwloc-${HWLOC_VERSION}"
+    # Match NIXL's manylinux dependency; retain it for runtime as well as compilation.
+    ./configure --prefix=/usr/local --libdir=/usr/local/lib --disable-nvml
+    make -j"${NPROC:-$(nproc)}"
+    make install
+    cd ..
+    rm -rf "hwloc-${HWLOC_VERSION}" hwloc.tar.gz
+    export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
+    # libhwloc.so.15 also exists in EL8's system directories. Prefer the new API at runtime.
+    printf '%s\n' /usr/local/lib > /etc/ld.so.conf.d/000_nixl_hwloc.conf
+    ldconfig
+fi
 CUDA_PATH="/usr/local/cuda"
 NIXL_VERSION="v1.5.2"
 NIXL_REPO="https://github.com/ai-dynamo/nixl.git"
@@ -90,6 +110,14 @@ meson setup builddir \
     --buildtype=release
 
 cd builddir && ninja install
+# Meson uses dist-packages on Ubuntu and versioned site-packages on Rocky.
+NIXL_PYTHON_PATH=$(meson introspect --installed | python3 -c '
+import json, pathlib, sys
+paths = {str(pathlib.Path(p).parent.parent) for p in json.load(sys.stdin).values()
+         if pathlib.Path(p).parent.name == "nixl_cu13" and pathlib.Path(p).name.startswith("_bindings.")}
+assert len(paths) == 1, paths
+print(paths.pop())
+')
 cd ../..
 rm -rf nixl  # Remove NIXL source tree to save space
 export LD_LIBRARY_PATH=$OLD_LD_LIBRARY_PATH
@@ -101,14 +129,14 @@ export LD_LIBRARY_PATH=$OLD_LD_LIBRARY_PATH
 pip3 install --no-deps "nixl==${NIXL_VERSION#v}"
 
 echo "export LD_LIBRARY_PATH=/opt/nvidia/nvda_nixl/lib/${ARCH_NAME}:/opt/nvidia/nvda_nixl/lib64:\$LD_LIBRARY_PATH" >> "${ENV}"
-# ninja installs the bindings outside site-packages, so the shim needs PYTHONPATH. This takes
+# The bindings are outside Python's default search path, so the shim needs PYTHONPATH. This takes
 # precedence over the PyPI backend that requirements-dev.txt installs into the test
 # environments, so keep that pin in step with NIXL_VERSION above -- otherwise the wheel is
 # installed and silently never used.
 # Prepend only once: ${ENV} is sourced again by every nested shell.
-cat >> "${ENV}" <<'EOF'
-case ":${PYTHONPATH:-}:" in
-  *":/opt/nvidia/nvda_nixl/lib/python3/dist-packages:"*) ;;
-  *) export PYTHONPATH="/opt/nvidia/nvda_nixl/lib/python3/dist-packages${PYTHONPATH:+:${PYTHONPATH}}" ;;
+cat >> "${ENV}" <<EOF
+case ":\${PYTHONPATH:-}:" in
+  *":${NIXL_PYTHON_PATH}:"*) ;;
+  *) export PYTHONPATH="${NIXL_PYTHON_PATH}\${PYTHONPATH:+:\${PYTHONPATH}}" ;;
 esac
 EOF

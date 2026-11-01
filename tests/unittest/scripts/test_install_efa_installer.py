@@ -25,6 +25,7 @@ EOF
     chmod +x aws-efa-installer/efa_installer.sh
 }
 apt-get() { printf '%s\n' "$@" > "$APT_ARGS"; }
+ldconfig() { :; }
 source "$INSTALL_EFA"
 """
 
@@ -45,7 +46,11 @@ def test_efa_container_install(
     os_release = tmp_path / "os-release"
     os_release.write_text(f'ID="{os_id}"\n')
     installer = tmp_path / "install_efa.sh"
-    installer.write_text(INSTALL_EFA.read_text().replace("/etc/os-release", str(os_release)))
+    installer.write_text(
+        INSTALL_EFA.read_text()
+        .replace("/etc/os-release", str(os_release))
+        .replace("/etc/ld.so.conf.d/000_efa.conf", str(tmp_path / "efa.conf"))
+    )
     scratch = tmp_path / "scratch"
     scratch.mkdir()
     env = {
