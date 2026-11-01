@@ -21,6 +21,7 @@ if ${have_headers} || ${have_library}; then
 fi
 
 . /etc/os-release
+# Match GDRCopy in the NGC PyTorch 26.09 base images.
 GDRCOPY_VERSION=2.5.1
 ARCH=$(uname -m)
 DOWNLOAD_ROOT="https://developer.download.nvidia.com/compute/redist/gdrcopy/CUDA%2013.0"
