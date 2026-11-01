@@ -52,7 +52,7 @@ If an unsupported NIXL backend is specified, TRT-LLM selects the NIXL UCX backen
 
 ### LIBFABRIC Backend Setup
 
-**Container builds:** `docker/common/install_nixl.sh` builds NIXL 1.5.2 and its LIBFABRIC plugin against a temporary libfabric 1.21.0 installation, matching the NIXL upstream wheel's ABI baseline. That installation is removed after the build. Ubuntu builds through `docker/Dockerfile.multi`, including NGC PyTorch images, install the official EFA Installer 1.51.0 userspace libraries at `/opt/amazon/efa` while preserving the existing MPI and rdma-core. Other base images must provide a compatible runtime libfabric and the appropriate provider. Set `TRTLLM_NIXL_KVCACHE_BACKEND=LIBFABRIC` to select the NIXL LIBFABRIC backend; the NIXL UCX backend remains the default.
+**Container builds:** `docker/common/install_nixl.sh` builds NIXL 1.5.2 and its LIBFABRIC plugin against a temporary libfabric 1.21.0 installation, matching the NIXL upstream wheel's ABI baseline. That installation is removed after the build. Ubuntu builds, including NGC PyTorch images, and Rocky Linux 8 builds through `docker/Dockerfile.multi` install the official EFA Installer 1.51.0 userspace libraries while preserving the existing MPI and rdma-core. The runtime library directory is `/opt/amazon/efa/lib` on Ubuntu and `/opt/amazon/efa/lib64` on Rocky Linux 8. Rocky builds skip the NCCL plugin installation. Other base images must provide a compatible runtime libfabric and the appropriate provider. Set `TRTLLM_NIXL_KVCACHE_BACKEND=LIBFABRIC` to select the NIXL LIBFABRIC backend; the NIXL UCX backend remains the default.
 
 **KV cache V2 over EFA:** Use NIXL 1.5.2 and EFA Installer 1.51.0 or later. These releases include the CUDA VMM context and synchronization fixes, plus EFA completion fixes. The libfabric 1.21.0 build baseline is an ABI compatibility choice, not a guarantee that older runtime libraries support CUDA VMM. `NIXL_DISABLE_CUDA_ADDR_WA=1` is not required for the context-independent allocation fix in NIXL 1.5.2. See the [NIXL release notes](https://github.com/ai-dynamo/nixl/releases/tag/v1.5.2) and [libfabric CUDA VMM fix](https://github.com/ofiwg/libfabric/pull/12918).
 
@@ -69,9 +69,16 @@ If an unsupported NIXL backend is specified, TRT-LLM selects the NIXL UCX backen
 - For EFA-enabled AWS instances using a non-bundled version, install through the [AWS EFA installer](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/efa-start.html) (recommend using the latest version)
 
 **hwloc**
-- NGC PyTorch container builds reuse the hwloc development files bundled with HPC-X under `/usr/local/mpi`. When those hwloc development files are present, `docker/common/install_nixl.sh` prepends `/usr/local/mpi/lib/pkgconfig` to `PKG_CONFIG_PATH`; no extra `libhwloc-dev` installation is needed for this configuration.
-- hwloc is used to understand the underlying architecture to optimize application performance
-- For other base images or custom MPI installations, provide compatible hwloc development files and ensure their `hwloc.pc` is discoverable through `PKG_CONFIG_PATH`.
+- NIXL's LIBFABRIC build requires development files for hwloc 2.3 or later.
+- NGC PyTorch 26.09 builds reuse HPC-X hwloc 2.7.1 under `/usr/local/mpi`, with `/usr/local/mpi/lib/pkgconfig` prepended to `PKG_CONFIG_PATH`. Non-NGC SBSA Ubuntu 24.04 builds reuse system hwloc 2.10.0. Neither configuration rebuilds hwloc when these development files are present.
+- If `pkg-config` cannot find a suitable version, the installer builds and retains hwloc 2.12.2 under `/usr/local`. This applies to Rocky 8's older hwloc 2.2.0. The system RPM and files remain installed, but the loader cache prefers the new library; this also affects other hwloc consumers, including Open MPI.
+- Custom installations must provide compatible development and runtime libraries and expose `hwloc.pc` through `PKG_CONFIG_PATH`.
+
+**GDRCopy (for the source-build installer)**
+- The temporary libfabric build enables GDRCopy and requires its userspace library and headers. `docker/Dockerfile.multi` runs `docker/common/install_gdrcopy.sh` to install version 2.5.1 when absent, preserving complete existing installations. Standalone users of `install_nixl.sh` must also provide these dependencies; the GDRCopy helper installs no kernel module.
+
+**NUMA**
+- Provide NUMA development files: `libnuma-dev` on Ubuntu or `numactl-devel` on Rocky Linux. The container base setup installs these packages.
 
 **Network Hardware Requirements:**
 - AWS EFA (Elastic Fabric Adapter), with compatible KV cache settings and dependency versions as described above
@@ -89,14 +96,14 @@ Skip these steps if your container already includes the NIXL LIBFABRIC plugin fo
 1. **Install libfabric dependencies:**
    - Follow the installation instructions from the links above based on your system
 
-2. **Provide hwloc development files:**
-   - Reuse the hwloc bundled with your MPI installation when available, and ensure its `hwloc.pc` is discoverable through `PKG_CONFIG_PATH`. Otherwise, install a compatible hwloc development package before rebuilding NIXL.
+2. **Provide source-build dependencies:**
+   - Provide the hwloc, GDRCopy and NUMA development files described above. Reuse suitable hwloc from your MPI installation when available, and ensure its `hwloc.pc` is discoverable through `PKG_CONFIG_PATH`.
 
 3. **Reinstall NIXL after installing libfabric:**
-   - After installing libfabric and hwloc, you must rebuild NIXL to generate the LIBFABRIC plugin against your custom path
-   - You can base your installation on `docker/common/install_nixl.sh`, which always builds a temporary libfabric 1.21.0 installation for the plugin
-   - For a custom installation, set `LIBFABRIC_INSTALL_PATH=/path/to/libfabric` immediately before the script's `meson setup` command, keeping the other Meson options unchanged
-   - For more details, see the [NIXL LIBFABRIC Plugin documentation](https://github.com/ai-dynamo/nixl/tree/6ee64753605b3110f8ef96c7cfc2f1315675c9c7/src/plugins/libfabric#nixl-libfabric-plugin)
+   - To compile the plugin against your custom installation, adapt a local copy of `docker/common/install_nixl.sh`. The unmodified script always builds a temporary libfabric 1.21.0 installation for the plugin.
+   - Inside `build_and_install_nixl()`, set `LIBFABRIC_BUILD_PATH=/path/to/libfabric` immediately before `meson setup`, which passes `-Dlibfabric_path="${LIBFABRIC_BUILD_PATH}"`. Keep the other Meson options unchanged. Setting the variable only in the environment before launching the script does not override its initialization.
+   - Keep the custom installation outside `WORK_DIR`, which is deleted on exit. `LIBFABRIC_BUILD_PATH` selects the build dependency only; configure runtime library lookup separately, for example by adding the custom prefix's `lib` or `lib64` directory to `LD_LIBRARY_PATH`, and provide its required fabric provider.
+   - For more details, see the [NIXL v1.5.2 LIBFABRIC Plugin documentation](https://github.com/ai-dynamo/nixl/blob/v1.5.2/src/plugins/libfabric/README.md#nixl-libfabric-plugin).
 
 ##### Option 2: Use Pre-compiled LIBFABRIC Plugin
 
@@ -109,6 +116,7 @@ If you have a pre-compiled `libplugin_LIBFABRIC.so` that matches your NIXL versi
    export TRTLLM_NIXL_KVCACHE_BACKEND=LIBFABRIC
    ```
 3. Ensure the plugin was built with the same NIXL version as in your container
+4. Ensure the runtime loader can find a compatible libfabric and its provider libraries. `NIXL_PLUGIN_DIR` selects the plugin directory; it does not configure dependency-library lookup.
 
 ### NIXL Configuration Examples
 
@@ -349,7 +357,7 @@ Therefore, the command can be written as follows:
 
 ```bash
 # The `container_image` must have the TensorRT-LLM wheel package pre-installed.
-# Once the task is successfully launched, an API service will be available externally at http://host_ip:PORT.
+# After launch, use the server node's IP address and the configured PORT to reach the API service.
 # Launch a context with `tp_size=8` using two 4-GPU nodes.
 srun -A <account> -p <partition> -t <time> \
     -N 2 --ntasks-per-node=4 \
@@ -403,14 +411,33 @@ resources:
 
 ##### 2. Install or Update EFA Libraries
 
-Skip this step if the container already includes EFA Installer 1.51.0 or later. Otherwise, update the EFA userspace libraries. For Ubuntu container builds with MPI and rdma-core already installed:
+Skip this step if the container already includes EFA Installer 1.51.0 or later. Otherwise, download the installer. The commands below preserve MPI and rdma-core, which must already be installed:
 
 ```bash
-# Update AWS EFA userspace without replacing MPI or rdma-core.
 curl -fLO https://efa-installer.amazonaws.com/aws-efa-installer-1.51.0.tar.gz
 tar -xf aws-efa-installer-1.51.0.tar.gz
-cd aws-efa-installer && ./efa_installer.sh --skip-mpi --skip-rdma-core --build-ngc
+cd aws-efa-installer
 ```
+
+For Ubuntu containers:
+
+```bash
+./efa_installer.sh --skip-mpi --skip-rdma-core --build-ngc
+printf '%s\n' /opt/amazon/efa/lib > /etc/ld.so.conf.d/000_efa.conf
+ldconfig
+```
+
+For Rocky Linux 8 containers, explicitly skip host configuration and the NCCL plugin:
+
+```bash
+rm -f "RPMS/ROCKYLINUX8/$(uname -m)"/dkms-*.rpm
+./efa_installer.sh --yes --skip-kmod --skip-limit-conf --no-verify \
+    --skip-mpi --skip-rdma-core --skip-plugin --disable-ngc
+printf '%s\n' /opt/amazon/efa/lib64 > /etc/ld.so.conf.d/000_efa.conf
+ldconfig
+```
+
+The DKMS RPM is excluded from the temporary installer directory because the standard RPM path selects it even with `--skip-kmod`. The EFA driver and host limits must be configured on the host.
 
 ##### 3. Rebuild NIXL with EFA Support if Needed
 
