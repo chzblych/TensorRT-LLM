@@ -3,12 +3,16 @@
 # SPDX-License-Identifier: Apache-2.0
 set -ex
 
-# Update EFA software stack only on Ubuntu images; skip elsewhere.
+# Install the EFA userspace stack on the supported container bases.
 . /etc/os-release
-if [ "${ID}" != "ubuntu" ]; then
-    echo "Skipping EFA installer: OS '${ID}'."
-    exit 0
-fi
+case "${ID}:${VERSION_ID}" in
+    ubuntu:*) EFA_LIB_DIR=/opt/amazon/efa/lib ;;
+    rocky:8*) EFA_LIB_DIR=/opt/amazon/efa/lib64 ;;
+    *)
+        echo "Skipping EFA installer: OS '${ID}' version '${VERSION_ID}'."
+        exit 0
+        ;;
+esac
 
 EFA_INSTALLER_VERSION="${EFA_INSTALLER_VERSION:-1.51.0}"
 # TODO: Use an internal mirror once the pinned EFA installer is available there.
@@ -24,14 +28,19 @@ curl --connect-timeout 30 --max-time 1800 --retry 3 --retry-delay 2 \
 tar -xf "aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz"
 cd aws-efa-installer
 
-apt-get update
-
-# --skip-mpi: NGC images already ship HPC-X / Open MPI; do not overwrite it.
-# --skip-rdma-core: use the base image's rdma-core.
-# --build-ngc: unattended EFA userspace setup without host driver installation,
-#              device verification, limit configuration or dependency replacement.
-./efa_installer.sh --skip-mpi --skip-rdma-core --build-ngc
+# Preserve the base image's MPI and rdma-core.
+if [ "${ID}" = ubuntu ]; then
+    apt-get update
+    # --build-ngc handles userspace-only installation for Ubuntu containers.
+    ./efa_installer.sh --skip-mpi --skip-rdma-core --build-ngc
+else
+    # Rocky uses standard RPMs; skip host setup and the unrelated NCCL plugin.
+    # The installer selects top-level DKMS RPMs even with --skip-kmod.
+    rm -f "RPMS/ROCKYLINUX8/$(uname -m)"/dkms-*.rpm
+    ./efa_installer.sh --yes --skip-kmod --skip-limit-conf --no-verify \
+        --skip-mpi --skip-rdma-core --skip-plugin --disable-ngc
+fi
 
 # Prefer the EFA runtime over an older distribution libfabric in the loader cache.
-printf '%s\n' /opt/amazon/efa/lib > /etc/ld.so.conf.d/000_efa.conf
+printf '%s\n' "${EFA_LIB_DIR}" > /etc/ld.so.conf.d/000_efa.conf
 ldconfig

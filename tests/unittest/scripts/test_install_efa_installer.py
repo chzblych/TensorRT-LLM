@@ -34,6 +34,7 @@ source "$INSTALL_EFA"
     ("os_id", "version", "fail_stage"),
     (
         ("rocky", None, ""),
+        ("alpine", None, ""),
         ("ubuntu", None, ""),
         ("ubuntu", "1.52.0", ""),
         ("ubuntu", None, "download"),
@@ -44,7 +45,8 @@ def test_efa_container_install(
     tmp_path: Path, os_id: str, version: str | None, fail_stage: str
 ) -> None:
     os_release = tmp_path / "os-release"
-    os_release.write_text(f'ID="{os_id}"\n')
+    os_version = "8.10" if os_id == "rocky" else "24.04"
+    os_release.write_text(f'ID="{os_id}"\nVERSION_ID="{os_version}"\n')
     installer = tmp_path / "install_efa.sh"
     installer.write_text(
         INSTALL_EFA.read_text()
@@ -74,19 +76,34 @@ def test_efa_container_install(
         assert not (tmp_path / "efa_args").exists()
     elif fail_stage == "install":
         assert (tmp_path / "efa_args").exists()
-    if os_id == "rocky":
+    if os_id == "alpine":
         assert not (tmp_path / "curl_args").exists()
         assert not (tmp_path / "apt_args").exists()
     elif not fail_stage:
         curl_args = (tmp_path / "curl_args").read_text().splitlines()
         assert curl_args[curl_args.index("--connect-timeout") + 1] == "30"
         assert curl_args[curl_args.index("--max-time") + 1] == "1800"
-        assert (tmp_path / "efa_args").read_text().splitlines() == [
-            "--skip-mpi",
-            "--skip-rdma-core",
-            "--build-ngc",
-        ]
-        assert (tmp_path / "apt_args").read_text().splitlines() == ["update"]
+        if os_id == "rocky":
+            assert (tmp_path / "efa_args").read_text().splitlines() == [
+                "--yes",
+                "--skip-kmod",
+                "--skip-limit-conf",
+                "--no-verify",
+                "--skip-mpi",
+                "--skip-rdma-core",
+                "--skip-plugin",
+                "--disable-ngc",
+            ]
+            assert not (tmp_path / "apt_args").exists()
+            assert (tmp_path / "efa.conf").read_text() == "/opt/amazon/efa/lib64\n"
+        else:
+            assert (tmp_path / "efa_args").read_text().splitlines() == [
+                "--skip-mpi",
+                "--skip-rdma-core",
+                "--build-ngc",
+            ]
+            assert (tmp_path / "apt_args").read_text().splitlines() == ["update"]
+            assert (tmp_path / "efa.conf").read_text() == "/opt/amazon/efa/lib\n"
         assert (
             f"https://efa-installer.amazonaws.com/aws-efa-installer-{version or '1.51.0'}.tar.gz"
             in (tmp_path / "curl_args").read_text().splitlines()
