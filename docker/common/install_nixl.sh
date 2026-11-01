@@ -69,7 +69,9 @@ prepare_hwloc() {
         cd ..
         rm -rf "hwloc-${HWLOC_VERSION}" hwloc.tar.gz
         export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
-        # libhwloc.so.15 also exists in EL8's system directories. Prefer the new API at runtime.
+        # On Rocky 8, the system hwloc RPM and its /usr/lib64 files remain installed.
+        # Prefer the new /usr/local/lib/libhwloc.so.15 through the loader cache.
+        # This changes default hwloc selection for other consumers, including Open MPI.
         printf '%s\n' /usr/local/lib > /etc/ld.so.conf.d/000_nixl_hwloc.conf
         ldconfig
     fi
