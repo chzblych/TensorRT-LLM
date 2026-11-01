@@ -3,12 +3,17 @@
 # SPDX-License-Identifier: Apache-2.0
 set -ex
 
-# Update EFA software stack only on Ubuntu images; skip elsewhere.
+# Install the EFA userspace stack on the supported container bases.
 . /etc/os-release
-if [ "${ID}" != "ubuntu" ]; then
-    echo "Skipping EFA installer: OS '${ID}'."
-    exit 0
-fi
+# NGC PyTorch 26.09 bundles EFA under /opt/amazon/efa/lib; Rocky RPMs use lib64.
+case "${ID}:${VERSION_ID}" in
+    ubuntu:*) EFA_LIB_DIR=/opt/amazon/efa/lib ;;
+    rocky:8*) EFA_LIB_DIR=/opt/amazon/efa/lib64 ;;
+    *)
+        echo "Skipping EFA installer: OS '${ID}' version '${VERSION_ID}'."
+        exit 0
+        ;;
+esac
 
 EFA_INSTALLER_VERSION="${EFA_INSTALLER_VERSION:-1.51.0}"
 # TODO: Use an internal mirror once the pinned EFA installer is available there.
@@ -24,10 +29,21 @@ curl --connect-timeout 30 --max-time 1800 --retry 3 --retry-delay 2 \
 tar -xf "aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz"
 cd aws-efa-installer
 
-apt-get update
+# Preserve the base image's MPI and rdma-core.
+if [ "${ID}" = ubuntu ]; then
+    apt-get update
+    # --build-ngc handles userspace-only installation for Ubuntu containers.
+    ./efa_installer.sh --skip-mpi --skip-rdma-core --build-ngc
+else
+    # Mirror --build-ngc's unattended setup and skip kernel modules, host limits and device checks.
+    # The standard RPM dependency installation still runs on Rocky.
+    # Preserve MPI/rdma-core and skip the unrelated NCCL plugin.
+    # The installer selects top-level DKMS RPMs even with --skip-kmod.
+    rm -f "RPMS/ROCKYLINUX8/$(uname -m)"/dkms-*.rpm
+    ./efa_installer.sh --yes --skip-kmod --skip-limit-conf --no-verify \
+        --skip-mpi --skip-rdma-core --skip-plugin --disable-ngc
+fi
 
-# --skip-mpi: NGC images already ship HPC-X / Open MPI; do not overwrite it.
-# --skip-rdma-core: use the base image's rdma-core.
-# --build-ngc: unattended EFA userspace setup without host driver installation,
-#              device verification, limit configuration or dependency replacement.
-./efa_installer.sh --skip-mpi --skip-rdma-core --build-ngc
+# Prefer the EFA runtime over an older distribution libfabric in the loader cache.
+printf '%s\n' "${EFA_LIB_DIR}" > /etc/ld.so.conf.d/000_efa.conf
+ldconfig

@@ -52,7 +52,7 @@ If an unsupported NIXL backend is specified, TRT-LLM selects the NIXL UCX backen
 
 ### LIBFABRIC Backend Setup
 
-**Container builds:** `docker/common/install_nixl.sh` builds NIXL 1.5.2 and its LIBFABRIC plugin against a temporary libfabric 1.21.0 installation, matching the NIXL upstream wheel's ABI baseline. That installation is removed after the build. Ubuntu builds through `docker/Dockerfile.multi`, including NGC PyTorch images, install the official EFA Installer 1.51.0 userspace libraries at `/opt/amazon/efa` while preserving the existing MPI and rdma-core. Other base images must provide a compatible runtime libfabric and the appropriate provider. Set `TRTLLM_NIXL_KVCACHE_BACKEND=LIBFABRIC` to select the NIXL LIBFABRIC backend; the NIXL UCX backend remains the default.
+**Container builds:** `docker/common/install_nixl.sh` builds NIXL 1.5.2 and its LIBFABRIC plugin against a temporary libfabric 1.21.0 installation, matching the NIXL upstream wheel's ABI baseline. That installation is removed after the build. Ubuntu builds, including NGC PyTorch images, and Rocky Linux 8 builds through `docker/Dockerfile.multi` install the official EFA Installer 1.51.0 userspace libraries while preserving the existing MPI and rdma-core. The runtime library directory is `/opt/amazon/efa/lib` on Ubuntu and `/opt/amazon/efa/lib64` on Rocky Linux 8. Rocky builds skip the NCCL plugin installation. Other base images must provide a compatible runtime libfabric and the appropriate provider. Set `TRTLLM_NIXL_KVCACHE_BACKEND=LIBFABRIC` to select the NIXL LIBFABRIC backend; the NIXL UCX backend remains the default.
 
 **KV cache V2 over EFA:** Use NIXL 1.5.2 and EFA Installer 1.51.0 or later. These releases include the CUDA VMM context and synchronization fixes, plus EFA completion fixes. The libfabric 1.21.0 build baseline is an ABI compatibility choice, not a guarantee that older runtime libraries support CUDA VMM. `NIXL_DISABLE_CUDA_ADDR_WA=1` is not required for the context-independent allocation fix in NIXL 1.5.2. See the [NIXL release notes](https://github.com/ai-dynamo/nixl/releases/tag/v1.5.2) and [libfabric CUDA VMM fix](https://github.com/ofiwg/libfabric/pull/12918).
 
@@ -71,7 +71,7 @@ If an unsupported NIXL backend is specified, TRT-LLM selects the NIXL UCX backen
 **hwloc**
 - NGC PyTorch container builds reuse the hwloc development files bundled with HPC-X under `/usr/local/mpi`. When those hwloc development files are present, `docker/common/install_nixl.sh` prepends `/usr/local/mpi/lib/pkgconfig` to `PKG_CONFIG_PATH`; no extra `libhwloc-dev` installation is needed for this configuration.
 - hwloc is used to understand the underlying architecture to optimize application performance
-- For other base images or custom MPI installations, provide compatible hwloc development files and ensure their `hwloc.pc` is discoverable through `PKG_CONFIG_PATH`.
+- For other base images, the installer builds and retains hwloc 2.12.2 if `pkg-config` cannot find hwloc 2.3 or later. Custom installations must provide compatible development and runtime libraries and expose `hwloc.pc` through `PKG_CONFIG_PATH`.
 
 **Network Hardware Requirements:**
 - AWS EFA (Elastic Fabric Adapter), with compatible KV cache settings and dependency versions as described above
@@ -403,14 +403,33 @@ resources:
 
 ##### 2. Install or Update EFA Libraries
 
-Skip this step if the container already includes EFA Installer 1.51.0 or later. Otherwise, update the EFA userspace libraries. For Ubuntu container builds with MPI and rdma-core already installed:
+Skip this step if the container already includes EFA Installer 1.51.0 or later. Otherwise, download the installer. The commands below preserve MPI and rdma-core, which must already be installed:
 
 ```bash
-# Update AWS EFA userspace without replacing MPI or rdma-core.
 curl -fLO https://efa-installer.amazonaws.com/aws-efa-installer-1.51.0.tar.gz
 tar -xf aws-efa-installer-1.51.0.tar.gz
-cd aws-efa-installer && ./efa_installer.sh --skip-mpi --skip-rdma-core --build-ngc
+cd aws-efa-installer
 ```
+
+For Ubuntu containers:
+
+```bash
+./efa_installer.sh --skip-mpi --skip-rdma-core --build-ngc
+printf '%s\n' /opt/amazon/efa/lib > /etc/ld.so.conf.d/000_efa.conf
+ldconfig
+```
+
+For Rocky Linux 8 containers, explicitly skip host configuration and the NCCL plugin:
+
+```bash
+rm -f "RPMS/ROCKYLINUX8/$(uname -m)"/dkms-*.rpm
+./efa_installer.sh --yes --skip-kmod --skip-limit-conf --no-verify \
+    --skip-mpi --skip-rdma-core --skip-plugin --disable-ngc
+printf '%s\n' /opt/amazon/efa/lib64 > /etc/ld.so.conf.d/000_efa.conf
+ldconfig
+```
+
+The DKMS RPM is excluded from the temporary installer directory because the standard RPM path selects it even with `--skip-kmod`. The EFA driver and host limits must be configured on the host.
 
 ##### 3. Rebuild NIXL with EFA Support if Needed
 
