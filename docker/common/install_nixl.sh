@@ -18,6 +18,7 @@ NIXL_REPO="https://github.com/ai-dynamo/nixl.git"
 CUDA_PATH="/usr/local/cuda"
 UCX_INSTALL_PATH="/usr/local/ucx/"
 HWLOC_INSTALL_PATH="/usr/local/mpi"
+HWLOC_BUILD_PATH="/opt/nvidia/nixl-deps/hwloc"
 
 # Build against the oldest supported libfabric ABI, independently of the runtime EFA installation.
 build_libfabric_for_nixl() {
@@ -62,18 +63,13 @@ prepare_hwloc() {
             -o hwloc.tar.gz
         tar -xzf hwloc.tar.gz
         cd "hwloc-${HWLOC_VERSION}"
-        # Match NIXL's manylinux dependency; retain it for runtime as well as compilation.
-        ./configure --prefix=/usr/local --libdir=/usr/local/lib --disable-nvml
+        # Keep this build dependency outside the system header and library search paths.
+        ./configure --prefix="${HWLOC_BUILD_PATH}" --libdir="${HWLOC_BUILD_PATH}/lib" --disable-nvml
         make -j"${NPROC:-$(nproc)}"
         make install
         cd ..
         rm -rf "hwloc-${HWLOC_VERSION}" hwloc.tar.gz
-        export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
-        # On Rocky 8, the system hwloc RPM and its /usr/lib64 files remain installed.
-        # Prefer the new /usr/local/lib/libhwloc.so.15 through the loader cache.
-        # This changes default hwloc selection for other consumers, including Open MPI.
-        printf '%s\n' /usr/local/lib > /etc/ld.so.conf.d/000_nixl_hwloc.conf
-        ldconfig
+        export PKG_CONFIG_PATH="${HWLOC_BUILD_PATH}/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
     fi
 }
 
