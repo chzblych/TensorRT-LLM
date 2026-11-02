@@ -17,7 +17,8 @@ GITHUB_URL="${GITHUB_MIRROR:-https://github.com}"
 NIXL_REPO="https://github.com/ai-dynamo/nixl.git"
 CUDA_PATH="/usr/local/cuda"
 UCX_INSTALL_PATH="/usr/local/ucx/"
-# Reuse hwloc bundled with HPC-X/Open MPI in NGC PyTorch images.
+# NGC PyTorch's default Open MPI comes from HPC-X and is exposed at /usr/local/mpi.
+# Reuse the hwloc bundled with that MPI installation for the NIXL LIBFABRIC plugin.
 NGC_PYTORCH_HWLOC_PREFIX="/usr/local/mpi"
 HWLOC_FALLBACK_PREFIX="/opt/nvidia/nixl-deps/hwloc"
 
