@@ -79,6 +79,7 @@ init_ubuntu() {
     libtool \
     autoconf \
     automake \
+    pkg-config \
     ccache \
     gdb \
     git-lfs \

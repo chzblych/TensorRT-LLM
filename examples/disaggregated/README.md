@@ -52,7 +52,11 @@ If an unsupported NIXL backend is specified, TRT-LLM selects the NIXL UCX backen
 
 ### LIBFABRIC Backend Setup
 
-**Container builds:** `docker/common/install_nixl.sh` builds NIXL 1.5.2 and its LIBFABRIC plugin against a temporary libfabric 1.21.0 installation, matching the NIXL upstream wheel's ABI baseline. That installation is removed after the build. Ubuntu builds, including NGC PyTorch images, and Rocky Linux 8 builds through `docker/Dockerfile.multi` install the official EFA Installer 1.51.0 userspace libraries while preserving the existing MPI and rdma-core. The runtime library directory is `/opt/amazon/efa/lib` on Ubuntu and `/opt/amazon/efa/lib64` on Rocky Linux 8. Rocky builds skip the NCCL plugin installation. Other base images must provide a compatible runtime libfabric and the appropriate provider. Set `TRTLLM_NIXL_KVCACHE_BACKEND=LIBFABRIC` to select the NIXL LIBFABRIC backend; the NIXL UCX backend remains the default.
+**Container builds:** `docker/common/install_nixl.sh` builds NIXL 1.5.2 and its LIBFABRIC plugin against a temporary libfabric 1.21.0 installation, matching the NIXL upstream wheel's ABI baseline. That installation is removed after the build. Ubuntu builds through `docker/Dockerfile.multi`, including NGC PyTorch images, install the official EFA Installer 1.51.0 userspace libraries under `/opt/amazon/efa/lib` while preserving the existing MPI and rdma-core.
+
+EFA Installer 1.51.0 supports `--build-ngc` only on Ubuntu. On other distributions it falls back to standard installation, which may change system RDMA dependencies. These container builds therefore skip EFA installation on non-Ubuntu images. Rocky Linux 8 builds retain the GDRCopy and hwloc build dependencies for wheel compilation; they do not provision an EFA runtime. Non-Ubuntu runtime environments must provide a compatible libfabric and the appropriate provider separately.
+
+Set `TRTLLM_NIXL_KVCACHE_BACKEND=LIBFABRIC` to select the NIXL LIBFABRIC backend; the NIXL UCX backend remains the default.
 
 **KV cache V2 over EFA:** Use NIXL 1.5.2 and EFA Installer 1.51.0 or later. These releases include the CUDA VMM context and synchronization fixes, plus EFA completion fixes. The libfabric 1.21.0 build baseline is an ABI compatibility choice, not a guarantee that older runtime libraries support CUDA VMM. `NIXL_DISABLE_CUDA_ADDR_WA=1` is not required for the context-independent allocation fix in NIXL 1.5.2. See the [NIXL release notes](https://github.com/ai-dynamo/nixl/releases/tag/v1.5.2) and [libfabric CUDA VMM fix](https://github.com/ofiwg/libfabric/pull/12918).
 
@@ -63,12 +67,13 @@ If an unsupported NIXL backend is specified, TRT-LLM selects the NIXL UCX backen
 **Required Dependencies:**
 
 **Libfabric**
-- On AWS, use the EFA installation at `/opt/amazon/efa`, updated by the container build as described above.
+- On AWS, use the EFA installation at `/opt/amazon/efa`, updated by Ubuntu container builds as described above.
 - For a custom libfabric installation, see [https://ofiwg.github.io/libfabric/](https://ofiwg.github.io/libfabric/)
 - **Minimum ABI baseline:** v1.21.0; the required runtime version also depends on the provider and memory type.
 - For EFA-enabled AWS instances using a non-bundled version, install through the [AWS EFA installer](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/efa-start.html) (recommend using the latest version)
 
 **hwloc**
+- The source build requires the `pkg-config` command to discover hwloc. Ubuntu container base setup installs the `pkg-config` package; standalone builds must provide it as well.
 - NIXL's LIBFABRIC build requires development files for hwloc 2.3 or later.
 - NGC PyTorch 26.09 builds reuse HPC-X hwloc 2.7.1 under `/usr/local/mpi`, with `/usr/local/mpi/lib/pkgconfig` prepended to `PKG_CONFIG_PATH`. Non-NGC SBSA Ubuntu 24.04 builds reuse system hwloc 2.10.0. Neither configuration rebuilds hwloc when these development files are present.
 - If `pkg-config` cannot find a suitable version, the installer builds and retains hwloc 2.12.2 under `/usr/local`. This applies to Rocky 8's older hwloc 2.2.0. The system RPM and files remain installed, but the loader cache prefers the new library; this also affects other hwloc consumers, including Open MPI.

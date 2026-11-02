@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Authenticate the github.com clone below; no-op when no token is available.
 source "${SCRIPT_DIR}/github_auth.sh"
 
-# Build-only ABI baseline; the EFA installer supplies the runtime libfabric.
+# Build-only ABI baseline; runtime libfabric is provided separately.
 LIBFABRIC_BUILD_VERSION="v1.21.0"
 # Source-build fallback from NIXL v1.5.2's manylinux dependency set.
 HWLOC_VERSION=2.12.2
