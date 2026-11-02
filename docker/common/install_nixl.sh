@@ -17,8 +17,9 @@ GITHUB_URL="${GITHUB_MIRROR:-https://github.com}"
 NIXL_REPO="https://github.com/ai-dynamo/nixl.git"
 CUDA_PATH="/usr/local/cuda"
 UCX_INSTALL_PATH="/usr/local/ucx/"
-HWLOC_INSTALL_PATH="/usr/local/mpi"
-HWLOC_BUILD_PATH="/opt/nvidia/nixl-deps/hwloc"
+# Reuse hwloc bundled with HPC-X/Open MPI in NGC PyTorch images.
+NGC_PYTORCH_HWLOC_PREFIX="/usr/local/mpi"
+HWLOC_FALLBACK_PREFIX="/opt/nvidia/nixl-deps/hwloc"
 
 # Build against the oldest supported libfabric ABI, independently of the runtime EFA installation.
 build_libfabric_for_nixl() {
@@ -45,12 +46,10 @@ build_libfabric_for_nixl() {
 }
 
 prepare_hwloc() {
-    # NGC PyTorch's default Open MPI comes from HPC-X and is exposed at /usr/local/mpi.
-    # Reuse the hwloc bundled with that MPI installation for the EFA plugin.
-    if [[ -f "${HWLOC_INSTALL_PATH}/include/hwloc.h" &&
-          -f "${HWLOC_INSTALL_PATH}/lib/libhwloc.so" &&
-          -f "${HWLOC_INSTALL_PATH}/lib/pkgconfig/hwloc.pc" ]]; then
-        export PKG_CONFIG_PATH="${HWLOC_INSTALL_PATH}/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
+    if [[ -f "${NGC_PYTORCH_HWLOC_PREFIX}/include/hwloc.h" &&
+          -f "${NGC_PYTORCH_HWLOC_PREFIX}/lib/libhwloc.so" &&
+          -f "${NGC_PYTORCH_HWLOC_PREFIX}/lib/pkgconfig/hwloc.pc" ]]; then
+        export PKG_CONFIG_PATH="${NGC_PYTORCH_HWLOC_PREFIX}/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
     fi
     # The LIBFABRIC plugin requires hwloc >= 2.3. For the current base images:
     # - NGC PyTorch: reuse bundled HPC-X hwloc 2.7.1 without rebuilding.
@@ -64,12 +63,12 @@ prepare_hwloc() {
         tar -xzf hwloc.tar.gz
         cd "hwloc-${HWLOC_VERSION}"
         # Keep this build dependency outside the system header and library search paths.
-        ./configure --prefix="${HWLOC_BUILD_PATH}" --libdir="${HWLOC_BUILD_PATH}/lib" --disable-nvml
+        ./configure --prefix="${HWLOC_FALLBACK_PREFIX}" --libdir="${HWLOC_FALLBACK_PREFIX}/lib" --disable-nvml
         make -j"${NPROC:-$(nproc)}"
         make install
         cd ..
         rm -rf "hwloc-${HWLOC_VERSION}" hwloc.tar.gz
-        export PKG_CONFIG_PATH="${HWLOC_BUILD_PATH}/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
+        export PKG_CONFIG_PATH="${HWLOC_FALLBACK_PREFIX}/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
     fi
 }
 
