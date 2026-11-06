@@ -112,7 +112,9 @@ SCENARIOS = {
 }
 
 
-def _make_rank(cp_rank: int, scenario: Scenario) -> tuple[KVCacheManagerV2, KVCacheV2Scheduler]:
+def _make_rank(
+    cp_rank: int, scenario: Scenario, request: pytest.FixtureRequest
+) -> tuple[KVCacheManagerV2, KVCacheV2Scheduler]:
     distributed = Mock()
     distributed.allreduce.side_effect = lambda value, op: value
     with patch.object(Distributed, "get", return_value=distributed):
@@ -136,6 +138,7 @@ def _make_rank(cp_rank: int, scenario: Scenario) -> tuple[KVCacheManagerV2, KVCa
             dtype=DataType.HALF,
             is_disagg=False,
         )
+    request.addfinalizer(manager.shutdown)
     scheduler = KVCacheV2Scheduler(
         max_batch_size=scenario.batch_size(),
         max_num_tokens=scenario.max_num_tokens,
@@ -224,9 +227,11 @@ def _step(
 
 
 @pytest.mark.parametrize("scenario_name", SCENARIOS)
-def test_agg_helix_preempts_identically_and_re_prefills_correctly(scenario_name: str) -> None:
+def test_agg_helix_preempts_identically_and_re_prefills_correctly(
+    scenario_name: str, request: pytest.FixtureRequest
+) -> None:
     scenario = SCENARIOS[scenario_name]
-    ranks = [_make_rank(cp_rank, scenario) for cp_rank in range(CP_SIZE)]
+    ranks = [_make_rank(cp_rank, scenario, request) for cp_rank in range(CP_SIZE)]
     context_preemptions = [0] * CP_SIZE
     for cp_rank, (manager, scheduler) in enumerate(ranks):
         # Aggregated helix provisions no tier below GPU, so preemption is the
