@@ -20,15 +20,15 @@ import groovy.transform.Field
 
 def initialize(pipeline)
 {
-    this.pipeline = pipeline
+    this.@pipeline = pipeline
     return this
 }
 
 def llmArtifactsPrimary()
 {
-    def primary = pipeline.LLM_ARTIFACTS_PRIMARY_FROM_PARENT ?: pipeline.env.LLM_ARTIFACTS_PRIMARY ?: "aws"
+    def primary = this.@pipeline.LLM_ARTIFACTS_PRIMARY_FROM_PARENT ?: this.@pipeline.env.LLM_ARTIFACTS_PRIMARY ?: "aws"
     if (!(primary in ["aws", "urm"])) {
-        pipeline.error("LLM_ARTIFACTS_PRIMARY must be 'aws' or 'urm', not '${primary}'")
+        this.@pipeline.error("LLM_ARTIFACTS_PRIMARY must be 'aws' or 'urm', not '${primary}'")
     }
     return primary
 }
@@ -37,19 +37,19 @@ def llmArtifactsLayoutPath(String legacyPath)
 {
     def layoutPath = legacyPath.replaceFirst(/^sw-tensorrt-generic(-local)?\//, "")
     if (!layoutPath.startsWith("llm-artifacts/")) {
-        pipeline.error("Not an llm-artifacts path: ${legacyPath}")
+        this.@pipeline.error("Not an llm-artifacts path: ${legacyPath}")
     }
     return layoutPath
 }
 
 def llmArtifactsRepoPath(String location, String legacyPath)
 {
-    return "${pipeline.LLM_ARTIFACTS_LOCATIONS[location].repo}/${llmArtifactsLayoutPath(legacyPath)}"
+    return "${this.@pipeline.LLM_ARTIFACTS_LOCATIONS[location].repo}/${llmArtifactsLayoutPath(legacyPath)}"
 }
 
 def llmArtifactsUrl(String location, String legacyPath)
 {
-    return "${pipeline.LLM_ARTIFACTS_LOCATIONS[location].root}/${llmArtifactsRepoPath(location, legacyPath)}"
+    return "${this.@pipeline.LLM_ARTIFACTS_LOCATIONS[location].root}/${llmArtifactsRepoPath(location, legacyPath)}"
 }
 
 return this

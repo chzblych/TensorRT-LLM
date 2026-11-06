@@ -19,13 +19,14 @@ from pathlib import Path
 
 
 def read_pipeline_source(entry: Path) -> str:
-    """Collect the entry and its functional modules without changing their code."""
+    """Collect the entry, functional modules, and native library classes unchanged."""
     folder = {"L0_Test.groovy": "test", "L0_MergeRequest.groovy": "mr"}.get(entry.name)
     paths = [entry]
     if folder is not None:
         root = entry.parent / "pipelines"
         paths.extend(sorted((root / "common").glob("*.groovy")))
         paths.extend(sorted((root / folder).glob("*.groovy")))
+        paths.extend(sorted((entry.parent / "pipeline-library" / "src").rglob("*.groovy")))
     return "\n".join(path.read_text(encoding="utf-8") for path in paths)
 
 

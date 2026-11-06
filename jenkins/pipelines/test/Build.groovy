@@ -18,10 +18,18 @@ import groovy.transform.Field
 import com.nvidia.bloom.Utils
 
 @Field def pipeline
+@Field Map buildOptions
 
 def initialize(pipeline)
 {
-    this.pipeline = pipeline
+    this.@pipeline = pipeline
+    def env = pipeline.env
+    this.@buildOptions = [
+        jobs: "4",
+        kitmakerCredentialsId: env.kitmakerCredentialsId ? env.kitmakerCredentialsId : "svc_tensorrt_kitmaker_api_token",
+        kitmakerDryRunPicEmail: env.kitmakerDryRunPicEmail ? env.kitmakerDryRunPicEmail : "kefu@nvidia.com",
+        kitmakerPublishTo: env.kitmakerPublishTo ? env.kitmakerPublishTo : "both_devzone_pypi",
+    ]
     return this
 }
 
@@ -29,8 +37,8 @@ def initialize(pipeline)
 // prepare_container.sh; a divergent key misses the cache silently forever.
 // Hashed on the Jenkins controller so no $()/\${} has to survive SSH quoting.
 def computeFatSqshPath(String fatSqshDir, String llmTarArtifactPath, String fatBuildScriptLocalPath) {
-    def scriptHash = pipeline.sh(returnStdout: true, script: "sha256sum ${fatBuildScriptLocalPath} | cut -d' ' -f1 | head -c 8").trim()
-    def hash = pipeline.sh(returnStdout: true, script: "printf '%s' '${llmTarArtifactPath}|${pipeline.LLM_DOCKER_IMAGE}|${scriptHash}' | sha256sum | cut -d' ' -f1 | head -c 16").trim()
+    def scriptHash = this.@pipeline.sh(returnStdout: true, script: "sha256sum ${fatBuildScriptLocalPath} | cut -d' ' -f1 | head -c 8").trim()
+    def hash = this.@pipeline.sh(returnStdout: true, script: "printf '%s' '${llmTarArtifactPath}|${this.@pipeline.LLM_DOCKER_IMAGE}|${scriptHash}' | sha256sum | cut -d' ' -f1 | head -c 16").trim()
     return [scriptHash: scriptHash, hash: hash, path: "${fatSqshDir}/fat-${hash}.sqsh"]
 }
 
@@ -48,9 +56,9 @@ export FAT_LLM_DOCKER_IMAGE="${args.llmDockerImage}"
 export FAT_BUILD_SCRIPT_PATH="${args.fatBuildScriptPathNode}"
 export FAT_TAR_NAME="${args.tarName}"
 export FAT_FETCH_HELPER_PATH="${args.fetchHelperPathNode}"
-export LLM_ARTIFACTS_PRIMARY="${pipeline.artifactPaths.llmArtifactsPrimary()}"
+export LLM_ARTIFACTS_PRIMARY="${this.@pipeline.artifactPaths.llmArtifactsPrimary()}"
 export ARTIFACTORY_NETRC="${args.artifactoryNetrcPathNode}"
-export ARTIFACTORY_CREDENTIAL_ID="${pipeline.LLM_ARTIFACTS_CREDENTIALS_ID}"
+export ARTIFACTORY_CREDENTIAL_ID="${this.@pipeline.LLM_ARTIFACTS_CREDENTIALS_ID}"
 bash "${args.fatBuildBodyPathNode}"
 """.stripIndent()
 }
@@ -248,7 +256,7 @@ def pythonVersionFromCpver(cpver)
     if (cpver == "cp312") {
         return "3.12"
     }
-    pipeline.error "Unsupported Python ABI for Kitmaker dry run: ${cpver}"
+    this.@pipeline.error "Unsupported Python ABI for Kitmaker dry run: ${cpver}"
 }
 
 def runKitmakerWheelDryRun(pipeline, wheel_path, python_bin, publish_to)
@@ -268,11 +276,11 @@ def runKitmakerWheelDryRun(pipeline, wheel_path, python_bin, publish_to)
             pipeline.trtllm_utils.llmExecStepWithRetry(
                 pipeline,
                 script: "${python_bin} -m pip install -r ${releaseScriptsDir}/requirements.txt")
-            pipeline.withCredentials([pipeline.string(credentialsId: pipeline.KITMAKER_CREDENTIALS_ID, variable: 'KITMAKER_API_TOKEN')]) {
+            pipeline.withCredentials([pipeline.string(credentialsId: this.@buildOptions.kitmakerCredentialsId, variable: 'KITMAKER_API_TOKEN')]) {
                 pipeline.retry(3) {
                     pipeline.echo "Publishing Kitmaker wheel dry run for ${wheelUrl}"
                     def resultData = pipeline.sh(script: """${python_bin} ${releaseScriptsDir}/kitmaker_wheel.py publish \
-                    --pic-email ${pipeline.KITMAKER_DRY_RUN_PIC_EMAIL} \
+                    --pic-email ${this.@buildOptions.kitmakerDryRunPicEmail} \
                     --publish-to ${publish_to} \
                     --size large \
                     --wheel-urls ${wheelUrl} \
@@ -302,7 +310,7 @@ def checkKitmakerWheelDryRun(pipeline, kitmakerDryRunMetadata)
         pipeline.catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
             pipeline.retry(3) {
                 pipeline.echo "Checking Kitmaker wheel dry run ${kitmakerDryRunMetadata.releaseUuid}"
-                pipeline.withCredentials([pipeline.string(credentialsId: pipeline.KITMAKER_CREDENTIALS_ID, variable: 'KITMAKER_API_TOKEN')]) {
+                pipeline.withCredentials([pipeline.string(credentialsId: this.@buildOptions.kitmakerCredentialsId, variable: 'KITMAKER_API_TOKEN')]) {
                     pipeline.sh """${kitmakerDryRunMetadata.pythonBin} ${kitmakerDryRunMetadata.releaseScriptsDir}/kitmaker_wheel.py check \
                         ${kitmakerDryRunMetadata.releaseUuid} \
                         --wait \
@@ -435,11 +443,11 @@ def runLLMBuild(
 
     pipeline.trtllm_utils.llmExecStepWithRetry(pipeline, script: "#!/bin/bash \n" + "cd tensorrt_llm/ && pip3 install -r requirements-dev.txt")
     pipeline.trtllm_utils.llmExecStepWithRetry(pipeline, script: "#!/bin/bash \n" + "cd tensorrt_llm/ && pip3 install -r requirements-grpc-smg.txt")
-    pipeline.buildArgs = "--clean --nixl_root /opt/nvidia/nvda_nixl"
+    def buildArgs = "--clean --nixl_root /opt/nvidia/nvda_nixl"
     if (cpu_arch == pipeline.AARCH64_TRIPLE) {
-        pipeline.buildArgs += " -a '90;100;103;107;120;121'"
+        buildArgs += " -a '90;100;103;107;120;121'"
     } else {
-        pipeline.buildArgs += " -a '80;86;89;90;100;103;107;120'"
+        buildArgs += " -a '80;86;89;90;100;103;107;120'"
     }
     def platNameArg = plat_name ? " --plat-name ${plat_name}" : ""
 
@@ -447,7 +455,7 @@ def runLLMBuild(
         "TRTLLM_BUILD_SOURCE_COMMIT=${pipeline.env.gitlabCommit}",
         "TRTLLM_VERSION_OVERRIDE=${version_override}",
     ]) {
-        pipeline.trtllm_utils.llmExecStepWithRetry(pipeline, script: "#!/bin/bash \n" + "cd tensorrt_llm/ && python3 scripts/build_wheel.py --version-override \"\${TRTLLM_VERSION_OVERRIDE}\" --use_ccache -G Ninja -j ${pipeline.BUILD_JOBS} -D 'WARNING_IS_ERROR=ON' --extra-cmake-vars ENABLE_BOLT_COMPATIBLE=ON ${pipeline.buildArgs}${platNameArg}")
+        pipeline.trtllm_utils.llmExecStepWithRetry(pipeline, script: "#!/bin/bash \n" + "cd tensorrt_llm/ && python3 scripts/build_wheel.py --version-override \"\${TRTLLM_VERSION_OVERRIDE}\" --use_ccache -G Ninja -j ${this.@buildOptions.jobs} -D 'WARNING_IS_ERROR=ON' --extra-cmake-vars ENABLE_BOLT_COMPATIBLE=ON ${buildArgs}${platNameArg}")
     }
 
     def wheelName = pipeline.sh(returnStdout: true, script: 'cd tensorrt_llm/build && ls -1 *.whl').trim()
@@ -520,7 +528,7 @@ def runLLMBuild(
         pipeline.echo "Skipping Kitmaker wheel dry run outside post-merge"
     } else {
         def kitmakerPython = "tensorrt_llm/.venv-${pythonVersionFromCpver(cpver)}/bin/python3"
-        kitmakerDryRunMetadata = runKitmakerWheelDryRun(pipeline, uploadedWheelPath, kitmakerPython, pipeline.KITMAKER_PUBLISH_TO)
+        kitmakerDryRunMetadata = runKitmakerWheelDryRun(pipeline, uploadedWheelPath, kitmakerPython, this.@buildOptions.kitmakerPublishTo)
     }
 
     if (reinstall_dependencies) {

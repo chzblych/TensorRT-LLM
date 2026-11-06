@@ -21,33 +21,33 @@ import groovy.json.JsonOutput
 
 def initialize(pipeline)
 {
-    this.pipeline = pipeline
+    this.@pipeline = pipeline
     return this
 }
 
 def getInfraDryRunPytestTargets(testListPath) {
-    if (!pipeline.testSelection.isInfraDryRun()) {
+    if (!this.@pipeline.testSelection.isInfraDryRun()) {
         return []
     }
 
     // --test-list filters after collection, so also pass the exact rendered
     // nodeid positionally to avoid importing unrelated product tests.
-    def targets = pipeline.readFile(file: testListPath).readLines()
+    def targets = this.@pipeline.readFile(file: testListPath).readLines()
         .collect { it.trim().split(/\s+/, 2)[0] }
         .findAll { it.contains("::") }
     def expectedTarget =
         "test_infra_dry_run_benchmark.py::test_infra_dry_run_benchmark"
     if (targets != [expectedTarget]) {
-        pipeline.error "Unexpected pytest targets in infrastructure dry-run list ${testListPath}: ${targets}"
+        this.@pipeline.error "Unexpected pytest targets in infrastructure dry-run list ${testListPath}: ${targets}"
     }
     return targets
 }
 
 def processShardTestList(llmSrc, testDBList, splitId, splits, durationsPath="") {
     // Preprocess testDBList to extract ISOLATION markers
-    pipeline.echo "Preprocessing testDBList to extract ISOLATION markers..."
+    this.@pipeline.echo "Preprocessing testDBList to extract ISOLATION markers..."
 
-    def originalTestLines = pipeline.readFile(file: testDBList).readLines()
+    def originalTestLines = this.@pipeline.readFile(file: testDBList).readLines()
 
     def cleanedTestLines = []
     def isolationTestLines = []
@@ -84,15 +84,15 @@ def processShardTestList(llmSrc, testDBList, splitId, splits, durationsPath="") 
     def cleanedTestDBList = testDBList.replaceAll('\\.txt$', '_cleaned.txt')
     if (cleanedTestLines.size() > 0) {
         def cleanedContent = cleanedTestLines.join('\n')
-        pipeline.sh "echo '${cleanedContent.replace("'", "'\\''")}' > ${cleanedTestDBList}"
-        pipeline.echo "Created cleaned testDBList: ${cleanedTestDBList} with ${cleanedTestLines.size()} lines (ISOLATION markers removed)"
+        this.@pipeline.sh "echo '${cleanedContent.replace("'", "'\\''")}' > ${cleanedTestDBList}"
+        this.@pipeline.echo "Created cleaned testDBList: ${cleanedTestDBList} with ${cleanedTestLines.size()} lines (ISOLATION markers removed)"
     } else {
-        pipeline.sh "touch ${cleanedTestDBList}"
-        pipeline.echo "No tests found, created empty cleaned testDBList: ${cleanedTestDBList}"
+        this.@pipeline.sh "touch ${cleanedTestDBList}"
+        this.@pipeline.echo "No tests found, created empty cleaned testDBList: ${cleanedTestDBList}"
     }
 
-    pipeline.sh "cat ${cleanedTestDBList}"
-    pipeline.echo "Original testDBList contains ${isolationTestLines.size()} tests that had ISOLATION markers"
+    this.@pipeline.sh "cat ${cleanedTestDBList}"
+    this.@pipeline.echo "Original testDBList contains ${isolationTestLines.size()} tests that had ISOLATION markers"
 
     def shardTestList = []
 
@@ -114,15 +114,15 @@ def processShardTestList(llmSrc, testDBList, splitId, splits, durationsPath="") 
 
     try {
         // First execute the pytest command and check if it succeeds
-        def pytestOutput = pipeline.sh(
+        def pytestOutput = this.@pipeline.sh(
             script: "cd ${llmSrc}/tests/integration/defs && ${testListCmd.join(' ')}",
             returnStdout: true
         ).trim()
 
         // Debug: Show the raw pytest output
-        pipeline.echo "<<<START_PYTEST_OUTPUT>>>"
-        pipeline.echo "${pytestOutput}"
-        pipeline.echo "<<<END_PYTEST_OUTPUT>>>"
+        this.@pipeline.echo "<<<START_PYTEST_OUTPUT>>>"
+        this.@pipeline.echo "${pytestOutput}"
+        this.@pipeline.echo "<<<END_PYTEST_OUTPUT>>>"
 
         // Filter the output to get only test lines with '::' that occur after "Running X items in this shard"
         def lines = pytestOutput.split('\n')
@@ -145,10 +145,10 @@ def processShardTestList(llmSrc, testDBList, splitId, splits, durationsPath="") 
             def shouldInclude = foundRunningLine && hasDoubleColon
             return shouldInclude
         }
-        pipeline.echo "Filtering complete. shardTestList size: ${shardTestList.size()}"
+        this.@pipeline.echo "Filtering complete. shardTestList size: ${shardTestList.size()}"
     } catch (Exception e) {
-        pipeline.echo "Error: Failed to execute pytest command for test collection: ${e.getMessage()}"
-        pipeline.error "Test collection failed for shard ${splitId}/${splits}. Cannot proceed without valid test list."
+        this.@pipeline.echo "Error: Failed to execute pytest command for test collection: ${e.getMessage()}"
+        this.@pipeline.error "Test collection failed for shard ${splitId}/${splits}. Cannot proceed without valid test list."
     }
 
     if (shardTestList) {
@@ -188,23 +188,23 @@ def processShardTestList(llmSrc, testDBList, splitId, splits, durationsPath="") 
         // Create shard-specific test files
         if (shardRegularTests.size() > 0) {
             def shardRegularContent = shardRegularTests.join('\n')
-            pipeline.sh "echo '${shardRegularContent.replace("'", "'\\''")}' > ${regularTestList}"
-            pipeline.echo "Created ${regularTestList} with ${shardRegularTests.size()} regular tests for this shard"
+            this.@pipeline.sh "echo '${shardRegularContent.replace("'", "'\\''")}' > ${regularTestList}"
+            this.@pipeline.echo "Created ${regularTestList} with ${shardRegularTests.size()} regular tests for this shard"
         } else {
-            pipeline.sh "touch ${regularTestList}"
-            pipeline.echo "No regular tests in this shard, created empty file: ${regularTestList}"
+            this.@pipeline.sh "touch ${regularTestList}"
+            this.@pipeline.echo "No regular tests in this shard, created empty file: ${regularTestList}"
         }
-        pipeline.sh "cat ${regularTestList}"
+        this.@pipeline.sh "cat ${regularTestList}"
 
         if (shardIsolateTests.size() > 0) {
             def shardIsolateContent = shardIsolateTests.join('\n')
-            pipeline.sh "echo '${shardIsolateContent.replace("'", "'\\''")}' > ${isolateTestList}"
-            pipeline.echo "Created ${isolateTestList} with ${shardIsolateTests.size()} isolate tests for this shard"
+            this.@pipeline.sh "echo '${shardIsolateContent.replace("'", "'\\''")}' > ${isolateTestList}"
+            this.@pipeline.echo "Created ${isolateTestList} with ${shardIsolateTests.size()} isolate tests for this shard"
         } else {
-            pipeline.sh "touch ${isolateTestList}"
-            pipeline.echo "No isolate tests in this shard, created empty file: ${isolateTestList}"
+            this.@pipeline.sh "touch ${isolateTestList}"
+            this.@pipeline.echo "No isolate tests in this shard, created empty file: ${isolateTestList}"
         }
-        pipeline.sh "cat ${isolateTestList}"
+        this.@pipeline.sh "cat ${isolateTestList}"
 
         // Return preprocessed lists object for compatibility
         return [
@@ -214,12 +214,12 @@ def processShardTestList(llmSrc, testDBList, splitId, splits, durationsPath="") 
             isolateCount: shardIsolateTests.size()
         ]
     } else {
-        pipeline.echo "No tests found in current shard or failed to list tests"
+        this.@pipeline.echo "No tests found in current shard or failed to list tests"
         // Create empty files and preprocessed lists object
         def regularTestList = testDBList.replaceAll('\\.txt$', '_regular.txt')
         def isolateTestList = testDBList.replaceAll('\\.txt$', '_isolate.txt')
-        pipeline.sh "touch ${regularTestList}"
-        pipeline.sh "touch ${isolateTestList}"
+        this.@pipeline.sh "touch ${regularTestList}"
+        this.@pipeline.sh "touch ${isolateTestList}"
 
         return [
             regular: regularTestList,
@@ -250,10 +250,10 @@ def transformMakoArgsToJson(optList) {
             // Try to convert nulls, booleans, and floats into the correct type
             if (value != null) {
                 if (value.toLowerCase() == "none") {
-                    pipeline.echo "Converted mako param '${param}' value '${value}' to 'null'"
+                    this.@pipeline.echo "Converted mako param '${param}' value '${value}' to 'null'"
                     value = null
                 } else if (value.toLowerCase() in ["true", "false"]) {
-                    pipeline.echo "Converted mako param '${param}' value '${value}' to Boolean '${value.toBoolean()}'"
+                    this.@pipeline.echo "Converted mako param '${param}' value '${value}' to Boolean '${value.toBoolean()}'"
                     value = value.toBoolean()
                 }
             }
@@ -267,7 +267,7 @@ def transformMakoArgsToJson(optList) {
     def makoOptsJson = JsonOutput.toJson(makoOpts)
 
     // Print and return the Test DB Query as a JSON string
-    pipeline.echo "Test DB Mako opts: ${makoOptsJson}"
+    this.@pipeline.echo "Test DB Mako opts: ${makoOptsJson}"
     return makoOptsJson
 }
 
@@ -289,15 +289,15 @@ def getMakoOpts(getMakoScript, makoArgs=[]) {
         listMakoCmd += " " + makoOptArgs.join(" ")
     }
     // Add the withCredentials step to access gpu-chip-mapping file
-    pipeline.withCredentials([pipeline.file(credentialsId: 'gpu-chip-mapping', variable: 'GPU_CHIP_MAPPING')]) {
-        listMakoCmd = [listMakoCmd, "--chip-mapping-file ${pipeline.GPU_CHIP_MAPPING}"].join(" ")
+    this.@pipeline.withCredentials([this.@pipeline.file(credentialsId: 'gpu-chip-mapping', variable: 'GPU_CHIP_MAPPING')]) {
+        listMakoCmd = [listMakoCmd, "--chip-mapping-file ${this.@pipeline.GPU_CHIP_MAPPING}"].join(" ")
         listMakoCmd = [listMakoCmd, "2>&1"].join(" ")
 
-        pipeline.echo "Scripts to get Mako list, cmd: ${listMakoCmd}"
+        this.@pipeline.echo "Scripts to get Mako list, cmd: ${listMakoCmd}"
 
         // Capture the mako output, add timeout in case any hang
-        pipeline.timeout(time: 30, unit: 'MINUTES'){
-            makoOutput = pipeline.sh(label: "Capture Mako Parameters", script: listMakoCmd, returnStdout: true)
+        this.@pipeline.timeout(time: 30, unit: 'MINUTES'){
+            makoOutput = this.@pipeline.sh(label: "Capture Mako Parameters", script: listMakoCmd, returnStdout: true)
         }
     }
 
@@ -435,7 +435,7 @@ def renderTestDB(pipeline, testContext, llmSrc, stageName, preDefinedMakoOpts=nu
     // If the download or extraction fails we swallow the error: the override
     // directory will be absent below, the overrideYaml check will fail, and
     // renderTestDB falls back to the source test-db.
-    def cbts = pipeline.testFilter[(pipeline.CBTS_RESULT)]
+    def cbts = pipeline.testFilter[(pipeline.runParameters.CBTS_RESULT)]
     if (cbts != null && cbts.test_db_dir_override && cbts.cbts_test_db_artifact_path) {
         try {
             // Always re-fetch: a reused workspace may hold a stale cbts_test_db/ shadowing this build's YAMLs.
@@ -505,8 +505,8 @@ def renderTestDB(pipeline, testContext, llmSrc, stageName, preDefinedMakoOpts=nu
 def getSSHConnectionPorts(portConfigFile, stageName)
 {
     def type = stageName.split('-')[0]
-    pipeline.echo "The type is: ${type}"
-    def fileContent = pipeline.sh(script: "cat ${portConfigFile}", returnStdout: true).trim()
+    this.@pipeline.echo "The type is: ${type}"
+    def fileContent = this.@pipeline.sh(script: "cat ${portConfigFile}", returnStdout: true).trim()
 
     // Get available VM port list from portConfigFile based on stage name (e.g. A10: [10022, 10023])
     def portList = []
@@ -520,17 +520,17 @@ def getSSHConnectionPorts(portConfigFile, stageName)
             }
         }
     }
-    pipeline.echo "Port List for ${type}: ${portList}"
+    this.@pipeline.echo "Port List for ${type}: ${portList}"
 
     // Get current port usage status
     def portUsage = ""
-    pipeline.withCredentials([
-        pipeline.usernamePassword(credentialsId: 'tensorrt_llm_infra_debug_vm_01_credentials', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD'),
-        pipeline.string(credentialsId: 'DEBUG_HOST_NAME', variable: 'HOST_NAME')
+    this.@pipeline.withCredentials([
+        this.@pipeline.usernamePassword(credentialsId: 'tensorrt_llm_infra_debug_vm_01_credentials', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD'),
+        this.@pipeline.string(credentialsId: 'DEBUG_HOST_NAME', variable: 'HOST_NAME')
         ]) {
-        portUsage = pipeline.sh(script: "ssh -v ${pipeline.USERNAME}@${pipeline.HOST_NAME} ${pipeline.COMMON_SSH_OPTIONS} 'netstat -tuln'", returnStdout: true)
+        portUsage = this.@pipeline.sh(script: "ssh -v ${this.@pipeline.USERNAME}@${this.@pipeline.HOST_NAME} ${this.@pipeline.COMMON_SSH_OPTIONS} 'netstat -tuln'", returnStdout: true)
     }
-    pipeline.echo "Port Usage: ${portUsage}"
+    this.@pipeline.echo "Port Usage: ${portUsage}"
 
     // Get an available VM port
     def userPort = 0
@@ -545,11 +545,11 @@ def getSSHConnectionPorts(portConfigFile, stageName)
     }
 
     if (userPort == 0) {
-        pipeline.echo "There is no available port for ${type}"
+        this.@pipeline.echo "There is no available port for ${type}"
         return [0, 0]
     }
 
-    pipeline.echo "The chosen port is: ${userPort}"
+    this.@pipeline.echo "The chosen port is: ${userPort}"
 
     // Calculate autossh monitor port by subtracting 9000 from VM port (e.g. 10022 -> 1022)
     // If monitor port is already in use, randomly assign a value between 2000-3000
@@ -558,7 +558,7 @@ def getSSHConnectionPorts(portConfigFile, stageName)
         monitorPort = 2000 + (int)(Math.random() * 1000)
     }
 
-    pipeline.echo "The monitor port is: ${monitorPort}"
+    this.@pipeline.echo "The monitor port is: ${monitorPort}"
 
     return [userPort, monitorPort]
 }

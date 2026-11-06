@@ -58,14 +58,13 @@ class InfraDryRunPipelineTest(unittest.TestCase):
     def test_parent_dry_run_is_opt_in_non_fail_fast_and_collects_results(self) -> None:
         helper = _function_body(L0_PARENT, "launchInfraDryRunTestJob")
 
-        self.assertIn(
-            "(INFRA_DRY_RUN): (params.InfraDryRun?.toString()?.toBoolean() ?: false)",
-            L0_PARENT,
-        )
+        self.assertIn("def testFilter = runParameters.parentTestFilter(", L0_PARENT)
+        self.assertIn("params.InfraDryRun?.toString()?.toBoolean() ?: false", L0_PARENT)
+        self.assertIn("filter[INFRA_DRY_RUN] = infraDryRun", L0_PARENT)
         self.assertIn('"L0_Test-${arch}-Single-GPU"', helper)
         self.assertIn("'testPhase2StageName': ''", helper)
         self.assertIn(
-            "def effectiveFailFast = testFilter[pipeline.INFRA_DRY_RUN] ? false : enableFailFast",
+            "def effectiveFailFast = testFilter[pipeline.runParameters.INFRA_DRY_RUN] ? false : enableFailFast",
             L0_PARENT,
         )
         self.assertIn("parallelJobs.failFast = effectiveFailFast", L0_PARENT)

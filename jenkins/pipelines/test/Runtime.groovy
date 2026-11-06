@@ -24,7 +24,7 @@ import trtllm.exceptions.UserFailure
 
 def initialize(pipeline)
 {
-    this.pipeline = pipeline
+    this.@pipeline = pipeline
     return this
 }
 
@@ -153,35 +153,35 @@ def runLLMAgentFlowTest(pipeline, stageName)
 def runInDockerOnNodeMultiStage(image, label, dockerArgs, partitionTimeout, needToDeleteDir=true)
 {
     return {
-        runner -> pipeline.node(label) {
+        runner -> this.@pipeline.node(label) {
             try {
                 if (needToDeleteDir) {
-                    pipeline.deleteDir()
+                    this.@pipeline.deleteDir()
                 }
-                pipeline.stage('Pull Docker Image') {
-                    pipeline.withCredentials([pipeline.usernamePassword(
-                        credentialsId: pipeline.ARTIFACTORY_CREDENTIALS_ID,
+                this.@pipeline.stage('Pull Docker Image') {
+                    this.@pipeline.withCredentials([this.@pipeline.usernamePassword(
+                        credentialsId: this.@pipeline.ARTIFACTORY_CREDENTIALS_ID,
                         usernameVariable: 'USERNAME',
                         passwordVariable: 'PASSWORD'
                     )]) {
-                        pipeline.sh """
+                        this.@pipeline.sh """
                             set +x
-                            echo "\$PASSWORD" | docker login ${pipeline.ARTIFACTORY_DOCKER_HOST} -u "\$USERNAME" --password-stdin
+                            echo "\$PASSWORD" | docker login ${this.@pipeline.ARTIFACTORY_DOCKER_HOST} -u "\$USERNAME" --password-stdin
                         """
                     }
-                    pipeline.docker.image(image).pull()
+                    this.@pipeline.docker.image(image).pull()
                 }
                 // We submit the Slurm job with the Slurm partition's time spec.
                 // Minus 10 minutes to avoid the Slurm job being stopped earlier.
-                pipeline.timeout(time: partitionTimeout - 10, unit: 'MINUTES') {
-                    pipeline.docker.image(image).inside(dockerArgs) {
-                        pipeline.trtllm_utils.setupGithubFetchAuth()
+                this.@pipeline.timeout(time: partitionTimeout - 10, unit: 'MINUTES') {
+                    this.@pipeline.docker.image(image).inside(dockerArgs) {
+                        this.@pipeline.trtllm_utils.setupGithubFetchAuth()
                         runner()
                     }
                 }
             } catch (Exception e) {
                 if (e.getMessage()?.contains("Failed to kill container")) {
-                    pipeline.echo "Known benign error ignored: ${e.getMessage()}"
+                    this.@pipeline.echo "Known benign error ignored: ${e.getMessage()}"
                 } else {
                     throw e // Re-throw if it's a different Exception
                 }
@@ -193,11 +193,11 @@ def runInDockerOnNodeMultiStage(image, label, dockerArgs, partitionTimeout, need
 def runInEnrootOnNode(label, partitionTimeout)
 {
     return {
-        runner -> pipeline.node(label) {
-            pipeline.trtllm_utils.setupGithubFetchAuth()
+        runner -> this.@pipeline.node(label) {
+            this.@pipeline.trtllm_utils.setupGithubFetchAuth()
             // We submit the Slurm job with the Slurm partition's time spec.
             // Minus 10 minutes to avoid the Slurm job being stopped earlier.
-            pipeline.timeout(time: partitionTimeout - 10, unit: 'MINUTES') {
+            this.@pipeline.timeout(time: partitionTimeout - 10, unit: 'MINUTES') {
                 runner()
             }
         }
@@ -254,7 +254,7 @@ def runKubernetesPodWithInfraRetry(Map opts = [:], pipeline, podSpec, containerN
 
     // DEBUG_MODE preserves the existing 2-hour-input human-inspection workflow
     // inside runLLMTestlistOnPlatform's finallyRunner: a single attempt only.
-    if (pipeline.testFilter[(pipeline.DEBUG_MODE)]) {
+    if (pipeline.testFilter[(pipeline.runParameters.DEBUG_MODE)]) {
         pipeline.trtllm_utils.launchKubernetesPod(pipeline, podSpec, containerName, { runner("", true, null) })
         return
     }
@@ -483,15 +483,15 @@ def launchTestJobsForImagesSanityCheck(pipeline, globalVars) {
     }
     // Update testConfigs image field using the map from globalVars
     testConfigs.each { key, config ->
-        if (globalVars[pipeline.IMAGE_KEY_TO_TAG] && globalVars[pipeline.IMAGE_KEY_TO_TAG][key]) {
-            config.image = globalVars[pipeline.IMAGE_KEY_TO_TAG][key]
+        if (globalVars[pipeline.runParameters.IMAGE_KEY_TO_TAG] && globalVars[pipeline.runParameters.IMAGE_KEY_TO_TAG][key]) {
+            config.image = globalVars[pipeline.runParameters.IMAGE_KEY_TO_TAG][key]
         }
     }
     // Filter out all configs that don't have image set
     testConfigs = testConfigs.findAll { key, config ->
         return config.image != null
     }
-    def maintenanceConfig = globalVars[pipeline.MAINTENANCE_ENTRIES] ?: [reason: "", patterns: []]
+    def maintenanceConfig = globalVars[pipeline.runParameters.MAINTENANCE_ENTRIES] ?: [reason: "", patterns: []]
     def maintenancePatterns = maintenanceConfig.patterns ?: []
     pipeline.testSelection.warnUnmatchedMaintenancePatterns(
         testConfigs.values()*.name, maintenancePatterns)
@@ -509,17 +509,17 @@ def launchTestJobsForImagesSanityCheck(pipeline, globalVars) {
         } else if (values.wheelInstalled) {
             pipeline.stage(values.name) {
                 pipeline.echo "Run ${values.name} sanity test."
-                pipeline.imageSanitySpec = pipeline.createKubernetesPodConfig(values.image, values.gpuType, values.k8sArch)
-                runKubernetesPodWithInfraRetry(pipeline, pipeline.imageSanitySpec, "trt-llm", values.name, { attemptTag, isFinalAttempt, retryContext = null ->
+                def imageSanitySpec = pipeline.createKubernetesPodConfig(values.image, values.gpuType, values.k8sArch)
+                runKubernetesPodWithInfraRetry(pipeline, imageSanitySpec, "trt-llm", values.name, { attemptTag, isFinalAttempt, retryContext = null ->
                     pipeline.sh "env | sort"
                     pipeline.trtllm_utils.llmExecStepWithRetry(pipeline, script: "apt-get update && apt-get install -y git rsync curl")
-                    pipeline.testPlatform.runLLMTestlistOnPlatform(pipeline, values.gpuType, "l0_sanity_check", values.config, values.name, 1, 1, true, "-SubJob-TestImage" + attemptTag, isFinalAttempt, retryContext)
+                    pipeline.jenkinsRunner.runLLMTestlistOnPlatform(pipeline, values.gpuType, "l0_sanity_check", values.config, values.name, 1, 1, true, "-SubJob-TestImage" + attemptTag, isFinalAttempt, retryContext)
                 })
             }
         } else {
             pipeline.stage(values.name) {
-                pipeline.imageSanitySpec = pipeline.createKubernetesPodConfig(values.image, "build", values.k8sArch)
-                pipeline.trtllm_utils.launchKubernetesPod(pipeline, pipeline.imageSanitySpec, "trt-llm", {
+                def imageSanitySpec = pipeline.createKubernetesPodConfig(values.image, "build", values.k8sArch)
+                pipeline.trtllm_utils.launchKubernetesPod(pipeline, imageSanitySpec, "trt-llm", {
                     pipeline.sh "env | sort"
                     def cpuArch = values.k8sArch == "amd64" ? pipeline.X86_64_TRIPLE : pipeline.AARCH64_TRIPLE
                     pipeline.testBuild.runLLMBuild(pipeline, cpuArch, false, "imageTest/")

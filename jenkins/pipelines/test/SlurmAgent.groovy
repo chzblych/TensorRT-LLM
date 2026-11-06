@@ -29,7 +29,7 @@ import trtllm.exceptions.UserFailure
 
 def initialize(pipeline)
 {
-    this.pipeline = pipeline
+    this.@pipeline = pipeline
     return this
 }
 
@@ -506,13 +506,13 @@ def runLLMTestlistWithAgent(pipeline, platform, testList, config=pipeline.VANILL
             }
         }
 
-        pipeline.slurmRunner = null
+        def slurmRunner = null
         pipeline.echo "${stageName} Slurm partition timeout: ${partition.time}"
         def partitionTimeout = partition?.time ? partition.time : SlurmConfig.DEFAULT_TIMEOUT_SHORT
         if (cluster.containerRuntime.toString() == "DOCKER") {
-            pipeline.slurmRunner = pipeline.testRuntime.runInDockerOnNodeMultiStage(pipeline.LLM_DOCKER_IMAGE, nodeName, dockerArgs, partitionTimeout, true)
+            slurmRunner = pipeline.testRuntime.runInDockerOnNodeMultiStage(pipeline.LLM_DOCKER_IMAGE, nodeName, dockerArgs, partitionTimeout, true)
         } else if (cluster.containerRuntime.toString() == "ENROOT") {
-            pipeline.slurmRunner = pipeline.testRuntime.runInEnrootOnNode(nodeName, partitionTimeout)
+            slurmRunner = pipeline.testRuntime.runInEnrootOnNode(nodeName, partitionTimeout)
         } else {
             throw new Exception("Unsupported container runtime: ${cluster.containerRuntime}")
         }
@@ -588,7 +588,7 @@ def runLLMTestlistWithAgent(pipeline, platform, testList, config=pipeline.VANILL
             return err
         }
         try {
-            pipeline.testExecution.executeLLMTestOnSlurm(pipeline, platform, testList, config, stageName, splitId, splits, skipInstallWheel, pipeline.slurmRunner, postTag, useClusterDurations, retryContext, classifySlurmFailure)
+            pipeline.jenkinsRunner.executeLLMTestOnSlurm(pipeline, platform, testList, config, stageName, splitId, splits, skipInstallWheel, slurmRunner, postTag, useClusterDurations, retryContext, classifySlurmFailure)
         } catch (InterruptedException e) {
             throw e
         } catch (Exception e) {

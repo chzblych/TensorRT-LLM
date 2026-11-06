@@ -20,10 +20,12 @@ import com.nvidia.bloom.SlurmConfig
 import trtllm.exceptions.InfraFailure
 
 @Field def pipeline
+@Field def modelExpressVersion
 
-def initialize(pipeline)
+def initialize(pipeline, modelExpressVersion)
 {
-    this.pipeline = pipeline
+    this.@pipeline = pipeline
+    this.@modelExpressVersion = modelExpressVersion
     return this
 }
 
@@ -113,17 +115,17 @@ def runLLMTestlistOnPlatformImpl(pipeline, platform, testList, config=pipeline.V
             if (stageName.contains("-ModelExpress-")) {
                 // The wheel goes in with --no-deps above, so its `mx` extra never
                 // applies. nixl comes from the image (install_nixl.sh).
-                pipeline.trtllm_utils.llmExecStepWithRetry(pipeline, script: "pip3 install modelexpress==${pipeline.MODEL_EXPRESS_VERSION}")
+                pipeline.trtllm_utils.llmExecStepWithRetry(pipeline, script: "pip3 install modelexpress==${this.@modelExpressVersion}")
             }
         }
 
         pipeline.trtllm_utils.llmExecStepWithRetry(pipeline, script: "git config --global --add safe.directory \"*\"")
     }
 
-    if (pipeline.testFilter[(pipeline.DEBUG_MODE)]) {
+    if (pipeline.testFilter[(pipeline.runParameters.DEBUG_MODE)]) {
         pipeline.stage("Interactive Debug Session")
         {
-            pipeline.testFilter[(pipeline.DEBUG_MODE)] = false
+            pipeline.testFilter[(pipeline.runParameters.DEBUG_MODE)] = false
 
             pipeline.sh """
                 echo 'Port 22' >> /etc/ssh/sshd_config
@@ -165,7 +167,7 @@ def runLLMTestlistOnPlatformImpl(pipeline, platform, testList, config=pipeline.V
                 def (int userPort, int monitorPort) = pipeline.testDb.getSSHConnectionPorts(portConfigFilePath, stageName)
                 if (userPort == 0) {
                     pipeline.echo "Fail to setup an interactive debug session and exit the debug mode."
-                    pipeline.testFilter[(pipeline.DEBUG_MODE)] = false
+                    pipeline.testFilter[(pipeline.runParameters.DEBUG_MODE)] = false
                     return
                 }
 
@@ -187,7 +189,7 @@ def runLLMTestlistOnPlatformImpl(pipeline, platform, testList, config=pipeline.V
                 }
             }
 
-            pipeline.testFilter[(pipeline.DEBUG_MODE)] = true
+            pipeline.testFilter[(pipeline.runParameters.DEBUG_MODE)] = true
         }
     }
 
@@ -226,17 +228,8 @@ def runLLMTestlistOnPlatformImpl(pipeline, platform, testList, config=pipeline.V
             ? "${llmSrc}/infra_dry_run_waives.txt"
             : "${llmSrc}/tests/integration/test_lists/waives.txt"
 
-        if (infraDryRun) {
-            pipeline.sh ": > ${waivesFilePath}"
-        } else {
-            // Download and Merge waives.txt
-            pipeline.testResults.mergeWaivesTxt(pipeline, llmSrc, stageName)
-
-            // Add passed test list from previous pipeline run to the waives.txt
-            if (pipeline.testFilter[(pipeline.REUSE_TEST)] != false) {
-                pipeline.testResults.reusePassedTestResults(llmSrc, stageName, waivesFilePath, postTag)
-            }
-        }
+        pipeline.testResults.prepareStageWaives(
+            pipeline, llmSrc, stageName, waivesFilePath, postTag, infraDryRun)
 
         // Process shard test list and create separate files for regular and isolate tests
         def preprocessedLists = pipeline.testDb.processShardTestList(llmSrc, testDBList, splitId, splits, clusterDurationsPath)
@@ -272,7 +265,7 @@ def runLLMTestlistOnPlatformImpl(pipeline, platform, testList, config=pipeline.V
         // Temporarily disable to reduce the log size
         // sh 'if [ "$(id -u)" -eq 0 ]; then dmesg -C || true; fi'
         def extraArgs = [*clusterDurationsArgs]
-        if (pipeline.ENABLE_UPLOAD_TEST_RESULTS && !pipeline.testFilter[(pipeline.DETAILED_LOG)]) {
+        if (pipeline.ENABLE_UPLOAD_TEST_RESULTS && !pipeline.testFilter[(pipeline.runParameters.DETAILED_LOG)]) {
             extraArgs += [
                 "--capture=fd",
                 "--s3-upload-path=${uploadPath}/${stageName}",
@@ -443,7 +436,7 @@ def runLLMTestlistOnPlatformImpl(pipeline, platform, testList, config=pipeline.V
                         pipeline.error "No tests were executed for stage ${stageName}, please check the test list and test-db rendering result."
                     }
                 } finally {
-                    if (pipeline.ENABLE_UPLOAD_TEST_RESULTS && !pipeline.testFilter[(pipeline.DETAILED_LOG)]) {
+                    if (pipeline.ENABLE_UPLOAD_TEST_RESULTS && !pipeline.testFilter[(pipeline.runParameters.DETAILED_LOG)]) {
                         pipeline.sh """
                             python3 ${llmSrc}/tests/test_common/s3_output.py \
                                 --drain-spool "${pipeline.WORKSPACE}/${stageName}" || true
@@ -518,7 +511,7 @@ def runLLMTestlistOnPlatform(pipeline, platform, testList, config=pipeline.VANIL
             runLLMTestlistOnPlatformImpl(pipeline, platform, testList, config, stageName, splitId, splits, skipInstallWheel, postTag, useClusterDurations, retryContext)
         }
     }, {
-        if (pipeline.testFilter[(pipeline.DEBUG_MODE)]) {
+        if (pipeline.testFilter[(pipeline.runParameters.DEBUG_MODE)]) {
             try {
                 pipeline.timeout(time: 2, unit: 'HOURS') {
                     pipeline.input message: "Pause 2 hours for Post-Debug. Please press the button to proceed when you finish debugging."
@@ -533,27 +526,33 @@ def runLLMTestlistOnPlatform(pipeline, platform, testList, config=pipeline.VANIL
                 pipeline.error("Error in post-debug session: ${e.message}")
             }
         }
-        // If the execution test list is null, remove the test result xml
-        pipeline.sh """
-            ls -al ${stageName}/
-            if ! grep -q '<testcase' ${stageName}/results.xml; then
-                rm ${stageName}/results.xml || true
-            fi
-        """
-        def llmPath = pipeline.sh (script: "realpath .", returnStdout: true).trim()
-        def llmSrc = "${llmPath}/${pipeline.LLM_ROOT}${config}/TensorRT-LLM/src"
-        // CPP tests will generate test result in ${llmSrc}/cpp/build_backup/, move these files to job result folder
-        pipeline.sh "ls -al ${llmSrc}/cpp/build_backup/ || true"
-        pipeline.sh "ls -al ${llmSrc}/cpp/build/ || true"
-        // Sed for CPP test result
-        pipeline.sh "cd ${llmSrc}/cpp/build_backup/ && sed -i 's/\" classname=\"/\" classname=\"${stageName}./g' *.xml || true"
-        pipeline.sh "cd ${llmSrc}/cpp/build_backup/ && sed -i 's/testsuite name=\"[^\"]*\"/testsuite name=\"${stageName}\"/g' *.xml || true"
-        // Sed for Pytest result
-        pipeline.sh "cd ${stageName} && sed -i 's/testsuite name=\"pytest\"/testsuite name=\"${stageName}\"/g' *.xml || true"
-        // Copy CPP test result
-        pipeline.sh "cp ${llmSrc}/cpp/build_backup/*.xml ${stageName} || true"
-        pipeline.sh "ls -al ${stageName}/"
+        pipeline.testResults.prepareJenkinsTestResults(pipeline, config, stageName)
     }, false, postTag, isFinalAttempt, retryContext)
+}
+
+def executeLLMTestOnSlurm(pipeline, platform, testList, config=pipeline.VANILLA_CONFIG, stageName="Undefined", splitId=1, splits=1, skipInstallWheel=false, runner, String postTag="", boolean useClusterDurations=false, Map retryContext=null, Closure classifySlurmFailure=null)
+{
+    runner {
+        pipeline.testResults.cacheErrorAndUploadResult(pipeline, stageName, {
+            try {
+                runLLMTestlistOnPlatformImpl(pipeline, platform, testList, config, stageName, splitId, splits, skipInstallWheel, postTag, useClusterDurations, retryContext)
+            } catch (InterruptedException e) {
+                throw e
+            } catch (Exception e) {
+                // Label the failure against the SLURM job's terminal state before
+                // cacheErrorAndUploadResult decides junit suppression, so a monitor-
+                // detected infra failure (e.g. slurm-job-still-running) suppresses this
+                // attempt's results and a passing retry stays green. Pipeline aborts
+                // (FlowInterruptedException) must not be relabeled.
+                if (classifySlurmFailure == null || e.getClass().name.contains("FlowInterruptedException")) {
+                    throw e
+                }
+                throw classifySlurmFailure(e)
+            }
+        }, {
+            pipeline.testResults.prepareJenkinsTestResults(pipeline, config, stageName)
+        }, false, postTag, true, retryContext)
+    }
 }
 
 return this

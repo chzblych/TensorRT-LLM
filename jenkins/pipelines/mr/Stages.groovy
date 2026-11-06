@@ -23,21 +23,21 @@ import org.jenkinsci.plugins.pipeline.modeldefinition.Utils as jUtils
 
 def initialize(pipeline)
 {
-    this.pipeline = pipeline
+    this.@pipeline = pipeline
     return this
 }
 
 def launchStages(pipeline, reuseBuild, testFilter, enableFailFast, globalVars)
 {
-    def releaseTargets = globalVars[pipeline.RELEASE_TARGET] ?: []
+    def releaseTargets = globalVars[pipeline.runParameters.RELEASE_TARGET] ?: []
     def wheelSelected = releaseTargets.contains("wheel")
     def containerSelected = releaseTargets.contains("container")
     def buildAllDockerImages = false
     def runContainerScanning = false
-    pipeline.stages = [
+    def stages = [
         "Release-Check": {
             pipeline.script {
-                if (testFilter[pipeline.INFRA_DRY_RUN]) {
+                if (testFilter[pipeline.runParameters.INFRA_DRY_RUN]) {
                     pipeline.echo "Skipping Release-Check for the infrastructure dry run."
                     return
                 } else if (pipeline.GEN_POST_MERGE_BUILDS_ONLY) {
@@ -49,7 +49,7 @@ def launchStages(pipeline, reuseBuild, testFilter, enableFailFast, globalVars)
         },
         "Check-Test-List": {
             pipeline.script {
-                if (testFilter[pipeline.INFRA_DRY_RUN]) {
+                if (testFilter[pipeline.runParameters.INFRA_DRY_RUN]) {
                     pipeline.mrRelease.skipStage("[Check-Test-List] Run", "Skipping Check Test List for the infrastructure dry run.")
                     return
                 } else if (pipeline.GEN_POST_MERGE_BUILDS_ONLY) {
@@ -58,7 +58,7 @@ def launchStages(pipeline, reuseBuild, testFilter, enableFailFast, globalVars)
                 } else if (pipeline.runMode == "nightly_release") {
                     pipeline.mrRelease.skipStage("[Check-Test-List] Run", "Skipping Check Test List for nightly_release.")
                     return
-                } else if (testFilter[(pipeline.ONLY_ONE_GROUP_CHANGED)] == "Docs") {
+                } else if (testFilter[(pipeline.runParameters.ONLY_ONE_GROUP_CHANGED)] == "Docs") {
                     pipeline.mrRelease.skipStage("[Check-Test-List] Run", "Skipping Check Test List for Docs-only changes.")
                     return
                 } else if (pipeline.env.JOB_NAME ==~ /.*BuildDockerImageSanityTest.*/) {
@@ -73,7 +73,7 @@ def launchStages(pipeline, reuseBuild, testFilter, enableFailFast, globalVars)
                 pipeline.stage("[OSS-Compliance-Check] Run") {
                     // Nightly releases always scan; merge requests scan only when compliance files change.
                     def isNightlyRelease = pipeline.runMode == "nightly_release"
-                    if (!isNightlyRelease && !testFilter[(pipeline.OSS_COMPLIANCE_FILE_CHANGED)]) {
+                    if (!isNightlyRelease && !testFilter[(pipeline.runParameters.OSS_COMPLIANCE_FILE_CHANGED)]) {
                         pipeline.echo "Skipping OSS Compliance Check: no OSS compliance-related files changed."
                         jUtils.markStageSkippedForConditional(pipeline.STAGE_NAME)
                         return
@@ -159,11 +159,11 @@ def launchStages(pipeline, reuseBuild, testFilter, enableFailFast, globalVars)
                         // Re-BOLT the packed tarball with the target branch's promoted
                         // profile bundle so the tests below exercise bolted binaries.
                         // Off unless resolveBoltConsume() allowed it (pre-merge, main).
-                        'boltConsume': globalVars[pipeline.BOLT_CONSUME_BUILD],
+                        'boltConsume': globalVars[pipeline.runParameters.BOLT_CONSUME_BUILD],
                         // Publish the BOLTed build beside an untouched canonical rather
                         // than replacing it. Post-merge only: canonical is the un-BOLTed
                         // tarball BoltProfileGen profiles.
-                        'boltPublishVariant': globalVars[pipeline.BOLT_PUBLISH_VARIANT],
+                        'boltPublishVariant': globalVars[pipeline.runParameters.BOLT_PUBLISH_VARIANT],
                     ]
                     // launchJob returns UNSTABLE (without throwing) when the build
                     // sub-job was infra-incomplete: only infra aborts, no genuine
@@ -176,11 +176,11 @@ def launchStages(pipeline, reuseBuild, testFilter, enableFailFast, globalVars)
                     pipeline.echo "Skipping x86_64 tests (GenPostMergeBuilds mode: builds only)"
                     return
                 }
-                if (testFilter[(pipeline.TEST_STAGE_LIST)]?.contains("NGC-Container-Scaning")) {
+                if (testFilter[(pipeline.runParameters.TEST_STAGE_LIST)]?.contains("NGC-Container-Scaning")) {
                     pipeline.echo "Skipping x86_64 tests (PLC container scanning)"
                     return
                 }
-                if (testFilter[pipeline.INFRA_DRY_RUN]) {
+                if (testFilter[pipeline.runParameters.INFRA_DRY_RUN]) {
                     def imageParameters = [
                         'dockerImage': globalVars["LLM_DOCKER_IMAGE"],
                         'wheelDockerImagePy310': globalVars["LLM_ROCKYLINUX8_PY310_DOCKER_IMAGE"],
@@ -333,7 +333,7 @@ def launchStages(pipeline, reuseBuild, testFilter, enableFailFast, globalVars)
         },
         "SBSA-Linux": {
             pipeline.script {
-                if (testFilter[(pipeline.ONLY_ONE_GROUP_CHANGED)] == "Docs") {
+                if (testFilter[(pipeline.runParameters.ONLY_ONE_GROUP_CHANGED)] == "Docs") {
                     pipeline.echo "SBSA build job is skipped due to Jenkins configuration or conditional pipeline run"
                     return
                 }
@@ -348,8 +348,8 @@ def launchStages(pipeline, reuseBuild, testFilter, enableFailFast, globalVars)
                         // Off unless resolveBoltConsume() allowed it. Post-merge is
                         // allowed only together with boltPublishVariant below, which
                         // keeps canonical -- the BOLT-Profile-Gen input -- un-BOLTed.
-                        'boltConsume': globalVars[pipeline.BOLT_CONSUME_BUILD],
-                        'boltPublishVariant': globalVars[pipeline.BOLT_PUBLISH_VARIANT],
+                        'boltConsume': globalVars[pipeline.runParameters.BOLT_CONSUME_BUILD],
+                        'boltPublishVariant': globalVars[pipeline.runParameters.BOLT_PUBLISH_VARIANT],
                     ]
                     // launchJob returns UNSTABLE (without throwing) when the build
                     // sub-job was infra-incomplete: only infra aborts, no genuine
@@ -363,11 +363,11 @@ def launchStages(pipeline, reuseBuild, testFilter, enableFailFast, globalVars)
                     return
                 }
 
-                if (testFilter[(pipeline.TEST_STAGE_LIST)]?.contains("NGC-Container-Scaning")) {
+                if (testFilter[(pipeline.runParameters.TEST_STAGE_LIST)]?.contains("NGC-Container-Scaning")) {
                     pipeline.echo "Skipping SBSA tests (PLC container scanning)"
                     return
                 }
-                if (testFilter[pipeline.INFRA_DRY_RUN]) {
+                if (testFilter[pipeline.runParameters.INFRA_DRY_RUN]) {
                     def imageParameters = [
                         "dockerImage": globalVars["LLM_SBSA_DOCKER_IMAGE"],
                         'wheelDockerImage': globalVars["LLM_SBSA_WHEEL_DOCKER_IMAGE"],
@@ -390,7 +390,7 @@ def launchStages(pipeline, reuseBuild, testFilter, enableFailFast, globalVars)
                             def additionalParameters = [
                                 "dockerImage": globalVars["LLM_SBSA_DOCKER_IMAGE"],
                                 'targetArch': "aarch64-linux-gnu",
-                                'branch': globalVars[pipeline.BUILD_BRANCH],
+                                'branch': globalVars[pipeline.runParameters.BUILD_BRANCH],
                                 'promote': "true",
                                 // Exactly ONE writer publishes a BOLTed build per
                                 // commit, and this launch site is where that choice
@@ -557,7 +557,7 @@ def launchStages(pipeline, reuseBuild, testFilter, enableFailFast, globalVars)
                 def testStageName = "[Build-Docker-Images] Remote Run"
                 pipeline.stage(testStageName) {
                     try {
-                        def branch = globalVars[pipeline.BUILD_BRANCH]
+                        def branch = globalVars[pipeline.runParameters.BUILD_BRANCH]
 
                         // Force the image tag suffix to be this L0_MergeRequest BUILD_NUMBER
                         // instead of the BuildDockerImages helper job's own counter.
@@ -689,11 +689,11 @@ def launchStages(pipeline, reuseBuild, testFilter, enableFailFast, globalVars)
         }
     ]
     if (pipeline.runMode == "nightly_release") {
-        testFilter[pipeline.TEST_STAGE_LIST] = null
-        testFilter[pipeline.EXTRA_STAGE_LIST] = null
+        testFilter[pipeline.runParameters.TEST_STAGE_LIST] = null
+        testFilter[pipeline.runParameters.EXTRA_STAGE_LIST] = null
         if (!wheelSelected) {
-            pipeline.stages.remove("x86_64-Linux")
-            pipeline.stages.remove("SBSA-Linux")
+            stages.remove("x86_64-Linux")
+            stages.remove("SBSA-Linux")
         }
         if (containerSelected) {
             runContainerScanning = true
@@ -704,29 +704,29 @@ def launchStages(pipeline, reuseBuild, testFilter, enableFailFast, globalVars)
             buildAllDockerImages = true
         }
         if (!pipeline.GEN_POST_MERGE_BUILDS_ONLY &&
-            (testFilter[(pipeline.TEST_STAGE_LIST)]?.contains("Build-Docker-Images") ||
-             testFilter[(pipeline.EXTRA_STAGE_LIST)]?.contains("Build-Docker-Images"))) {
+            (testFilter[(pipeline.runParameters.TEST_STAGE_LIST)]?.contains("Build-Docker-Images") ||
+             testFilter[(pipeline.runParameters.EXTRA_STAGE_LIST)]?.contains("Build-Docker-Images"))) {
             buildAllDockerImages = true
-            testFilter[(pipeline.TEST_STAGE_LIST)]?.remove("Build-Docker-Images")
-            testFilter[(pipeline.EXTRA_STAGE_LIST)]?.remove("Build-Docker-Images")
+            testFilter[(pipeline.runParameters.TEST_STAGE_LIST)]?.remove("Build-Docker-Images")
+            testFilter[(pipeline.runParameters.EXTRA_STAGE_LIST)]?.remove("Build-Docker-Images")
             pipeline.echo "Will run Build-Docker-Images job"
-            pipeline.stages.remove("x86_64-Linux")
-            pipeline.stages.remove("SBSA-Linux")
+            stages.remove("x86_64-Linux")
+            stages.remove("SBSA-Linux")
             pipeline.echo "Build-Docker-Images job is set explicitly. Both x86_64-Linux and SBSA-Linux sub-pipelines will be disabled."
         }
-        if (testFilter[(pipeline.TEST_STAGE_LIST)]?.contains("NGC-Container-Scaning")) {
+        if (testFilter[(pipeline.runParameters.TEST_STAGE_LIST)]?.contains("NGC-Container-Scaning")) {
             runContainerScanning = true
-            testFilter[(pipeline.TEST_STAGE_LIST)]?.remove("NGC-Container-Scanning")
+            testFilter[(pipeline.runParameters.TEST_STAGE_LIST)]?.remove("NGC-Container-Scanning")
             pipeline.echo "Will run job to build ngc containers and running in-pipeline scanning for them"
         }
     }
 
     if (buildAllDockerImages || runContainerScanning) {
-        pipeline.stages += dockerBuildJob
+        stages += dockerBuildJob
     }
 
     def alwaysFailFastStages = ["Release-Check", "Check-Test-List"] as Set
-    pipeline.parallelJobs = pipeline.stages.collectEntries{key, value -> [key, {
+    def parallelJobs = stages.collectEntries{key, value -> [key, {
         pipeline.script {
             pipeline.stage(key) {
                 if (enableFailFast || key in alwaysFailFastStages) {
@@ -742,9 +742,9 @@ def launchStages(pipeline, reuseBuild, testFilter, enableFailFast, globalVars)
     }]}
 
     // Preserve both architecture tracks during dry acceptance.
-    def effectiveFailFast = testFilter[pipeline.INFRA_DRY_RUN] ? false : enableFailFast
-    pipeline.parallelJobs.failFast = effectiveFailFast
-    pipeline.parallel pipeline.parallelJobs
+    def effectiveFailFast = testFilter[pipeline.runParameters.INFRA_DRY_RUN] ? false : enableFailFast
+    parallelJobs.failFast = effectiveFailFast
+    pipeline.parallel parallelJobs
 }
 
 return this

@@ -23,7 +23,7 @@ import groovy.json.JsonSlurper
 
 def initialize(pipeline)
 {
-    this.pipeline = pipeline
+    this.@pipeline = pipeline
     return this
 }
 
@@ -63,7 +63,7 @@ def _cbtsEnsureCliDependencies(pipeline)
 def getCbtsResult(pipeline, testFilter, globalVars)
 {
     // Explicit kill switch: `/bot run --disable-cbts` forces a full run.
-    if (testFilter[(pipeline.DISABLE_CBTS)]) {
+    if (testFilter[(pipeline.runParameters.DISABLE_CBTS)]) {
         pipeline.echo("CBTS: disabled — user-specified /bot run --disable-cbts")
         if (_cbtsEnsureCliDependencies(pipeline)) {
             _cbtsReportDecision(pipeline, globalVars, "disabled", "user flag: disable_cbts", null)
@@ -124,7 +124,7 @@ def getCbtsResult(pipeline, testFilter, globalVars)
         def inputJson = groovy.json.JsonOutput.toJson([
             changed_files: changedFiles,
             diffs: diffs,
-            post_merge: testFilter[(pipeline.IS_POST_MERGE)] ?: false,
+            post_merge: testFilter[(pipeline.runParameters.IS_POST_MERGE)] ?: false,
         ])
         def inputPath = "${pipeline.LLM_ROOT}/cbts_input.json"
         pipeline.writeFile file: inputPath, text: inputJson
@@ -166,8 +166,8 @@ def getCbtsResult(pipeline, testFilter, globalVars)
                                 false, false, false, coveragePilotEligible)
             return null
         }
-        def runStatus = (testFilter[(pipeline.IS_POST_MERGE)] ?: false) ? "post_merge" : "pre_merge"
-        def multiGpuRequired = (testFilter[(pipeline.MULTI_GPU_FILE_CHANGED)] ?: false) as boolean
+        def runStatus = (testFilter[(pipeline.runParameters.IS_POST_MERGE)] ?: false) ? "post_merge" : "pre_merge"
+        def multiGpuRequired = (testFilter[(pipeline.runParameters.MULTI_GPU_FILE_CHANGED)] ?: false) as boolean
         def multiGpuLabelGateOpen = multiGpuRequired &&
             _cbtsMultiGpuLabelGateOpen(pipeline, globalVars)
         def coverageShadow = result.scope == "coverage" && !coveragePilotEligible
@@ -404,7 +404,7 @@ def _cbtsCoverageAudit(pipeline, globalVars, String residualPath)
 
 def _cbtsPrNumber(globalVars)
 {
-    def prUrl = globalVars[pipeline.GITHUB_PR_API_URL]
+    def prUrl = globalVars[this.@pipeline.runParameters.GITHUB_PR_API_URL]
     if (prUrl) {
         def match = (prUrl =~ /\/pulls?\/(\d+)/)
         if (match.find()) {
@@ -412,7 +412,7 @@ def _cbtsPrNumber(globalVars)
         }
         return ""
     }
-    return pipeline.env.gitlabMergeRequestIid ?: ""
+    return this.@pipeline.env.gitlabMergeRequestIid ?: ""
 }
 
 // Post one CBTS decision record to OpenSearch (best-effort; never blocks CI).
@@ -490,8 +490,8 @@ def _cbtsMatchesAnyPattern(String filePath, List patterns)
 def _cbtsTriggeredUserFlags(testFilter)
 {
     def deferFlags = [
-        pipeline.ENABLE_SKIP_TEST, pipeline.TEST_STAGE_LIST, pipeline.EXTRA_STAGE_LIST, pipeline.GPU_TYPE_LIST,
-        pipeline.TEST_BACKEND, pipeline.ADD_MULTI_GPU_TEST, pipeline.ONLY_MULTI_GPU_TEST, pipeline.DISABLE_MULTI_GPU_TEST,
+        this.@pipeline.runParameters.ENABLE_SKIP_TEST, this.@pipeline.runParameters.TEST_STAGE_LIST, this.@pipeline.runParameters.EXTRA_STAGE_LIST, this.@pipeline.runParameters.GPU_TYPE_LIST,
+        this.@pipeline.runParameters.TEST_BACKEND, this.@pipeline.runParameters.ADD_MULTI_GPU_TEST, this.@pipeline.runParameters.ONLY_MULTI_GPU_TEST, this.@pipeline.runParameters.DISABLE_MULTI_GPU_TEST,
     ]
     return deferFlags.findAll { testFilter[it] }
                      .collect { "${it}=${testFilter[it]}" }

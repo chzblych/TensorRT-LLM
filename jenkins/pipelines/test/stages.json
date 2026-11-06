@@ -1,0 +1,851 @@
+{
+  "_license": [
+    "Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.",
+    "",
+    "Licensed under the Apache License, Version 2.0 (the \"License\");",
+    "you may not use this file except in compliance with the License.",
+    "You may obtain a copy of the License at",
+    "",
+    "    http://www.apache.org/licenses/LICENSE-2.0",
+    "",
+    "Unless required by applicable law or agreed to in writing, software",
+    "distributed under the License is distributed on an \"AS IS\" BASIS,",
+    "WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.",
+    "See the License for the specific language governing permissions and",
+    "limitations under the License."
+  ],
+  "version": 1,
+  "groups": [
+    {
+      "name": "x86TestConfigs",
+      "arch": "x86",
+      "runner": "kubernetes",
+      "stages": [
+        {
+          "name": "CPU-Generic-x86-{shard}",
+          "platform": "cpu",
+          "testList": "l0_cpu",
+          "splits": 2
+        },
+        {
+          "name": "DGX_H100-4_GPUs-CPP-{shard}",
+          "platform": "dgx-h100-x4",
+          "testList": "l0_dgx_h100",
+          "splits": 1,
+          "gpuCount": 4
+        },
+        {
+          "name": "A10-PyTorch-{shard}",
+          "platform": "a10",
+          "testList": "l0_a10",
+          "splits": 3
+        },
+        {
+          "name": "A30-PyTorch-{shard}",
+          "platform": "a30",
+          "testList": "l0_a30",
+          "splits": 2
+        },
+        {
+          "name": "A30-CPP-{shard}",
+          "platform": "a30",
+          "testList": "l0_a30",
+          "splits": 1
+        },
+        {
+          "name": "A100X-PyTorch-{shard}",
+          "platform": "a100x",
+          "testList": "l0_a100",
+          "splits": 1
+        },
+        {
+          "name": "L40S-PyTorch-{shard}",
+          "platform": "l40s",
+          "testList": "l0_l40s",
+          "splits": 2
+        },
+        {
+          "name": "H100_PCIe-PyTorch-Ray-{shard}",
+          "platform": "h100-cr",
+          "testList": "l0_h100",
+          "splits": 1
+        },
+        {
+          "name": "H100_PCIe-CPP-{shard}",
+          "platform": "h100-cr",
+          "testList": "l0_h100",
+          "splits": 1
+        },
+        {
+          "name": "DGX_H100-2_GPUs-PyTorch-ModelExpress-{shard}",
+          "platform": "dgx-h100-x4",
+          "testList": "l0_model_express",
+          "splits": 1,
+          "gpuCount": 2,
+          "options": {
+            "modelExpress": true
+          }
+        },
+        {
+          "name": "DGX_H100-4_GPUs-PyTorch-ModelExpress-OnDemand-{shard}",
+          "platform": "dgx-h100-x4",
+          "testList": "l0_model_express",
+          "splits": 1,
+          "gpuCount": 4,
+          "options": {
+            "modelExpress": true
+          }
+        },
+        {
+          "name": "DGX_H100-2_GPUs-PyTorch-ModelExpress-Post-Merge-{shard}",
+          "platform": "dgx-h100-x4",
+          "testList": "l0_model_express",
+          "splits": 1,
+          "gpuCount": 2,
+          "options": {
+            "modelExpress": true
+          }
+        },
+        {
+          "name": "RTX5090-PyTorch-{shard}",
+          "platform": "rtx-5090",
+          "testList": "l0_gb202",
+          "splits": 1
+        },
+        {
+          "name": "RTX5080-PyTorch-{shard}",
+          "platform": "rtx-5080",
+          "testList": "l0_gb203",
+          "splits": 2
+        },
+        {
+          "name": "A10-PyTorch-Post-Merge-{shard}",
+          "platform": "a10",
+          "testList": "l0_a10",
+          "splits": 4
+        },
+        {
+          "name": "A10-FMHA-Post-Merge-{shard}",
+          "platform": "a10",
+          "testList": "l0_a10",
+          "splits": 1
+        },
+        {
+          "name": "A30-CPP-Post-Merge-{shard}",
+          "platform": "a30",
+          "testList": "l0_a30",
+          "splits": 2
+        },
+        {
+          "name": "A100X-PyTorch-Post-Merge-{shard}",
+          "platform": "a100x",
+          "testList": "l0_a100",
+          "splits": 1
+        },
+        {
+          "name": "L40S-PyTorch-Post-Merge-{shard}",
+          "platform": "l40s",
+          "testList": "l0_l40s",
+          "splits": 1
+        },
+        {
+          "name": "L40S-FMHA-Post-Merge-{shard}",
+          "platform": "l40s",
+          "testList": "l0_l40s",
+          "splits": 1
+        },
+        {
+          "name": "H100_PCIe-FMHA-Post-Merge-{shard}",
+          "platform": "h100-cr",
+          "testList": "l0_h100",
+          "splits": 1
+        },
+        {
+          "name": "DGX_H200-8_GPUs-PyTorch-Post-Merge-{shard}",
+          "platform": "dgx-h200-x8",
+          "testList": "l0_dgx_h200",
+          "splits": 1,
+          "gpuCount": 8
+        },
+        {
+          "name": "DGX_H200-4_GPUs-PyTorch-Post-Merge-{shard}",
+          "platform": "dgx-h200-x4",
+          "testList": "l0_dgx_h200",
+          "splits": 1,
+          "gpuCount": 4
+        },
+        {
+          "name": "DGX_H200-8_GPUs-PyTorch-PerfSanity-Post-Merge-{shard}",
+          "platform": "dgx-h200-x8",
+          "testList": "l0_dgx_h200_perf_sanity",
+          "splits": 1,
+          "gpuCount": 8
+        },
+        {
+          "name": "RTXPro6000D-PyTorch-{shard}",
+          "platform": "rtx-pro-6000d",
+          "testList": "l0_rtx_pro_6000",
+          "splits": 1
+        },
+        {
+          "name": "RTXPro6000D-PyTorch-Post-Merge-{shard}",
+          "platform": "rtx-pro-6000d",
+          "testList": "l0_rtx_pro_6000",
+          "splits": 1
+        }
+      ]
+    },
+    {
+      "name": "x86SlurmTestConfigs",
+      "arch": "x86",
+      "runner": "slurmAgent",
+      "stages": [
+        {
+          "name": "DGX_H100-PyTorch-{shard}",
+          "platform": "auto:dgx-h100-x1",
+          "testList": "l0_h100",
+          "splits": 6
+        },
+        {
+          "name": "DGX_H100-PyTorch-Post-Merge-{shard}",
+          "platform": "auto:dgx-h100-x1",
+          "testList": "l0_h100",
+          "splits": 2
+        },
+        {
+          "name": "DGX_A100-FMHA-Post-Merge-{shard}",
+          "platform": "auto:dgx-a100-x1",
+          "testList": "l0_a100",
+          "splits": 1
+        },
+        {
+          "name": "DGX_H100-2_GPUs-PyTorch-Others-{shard}",
+          "platform": "auto:dgx-h100-x2",
+          "testList": "l0_dgx_h100",
+          "splits": 2,
+          "gpuCount": 2
+        },
+        {
+          "name": "DGX_H100-2_GPUs-PyTorch-GptOss-{shard}",
+          "platform": "auto:dgx-h100-x2",
+          "testList": "l0_dgx_h100",
+          "splits": 1,
+          "gpuCount": 2
+        },
+        {
+          "name": "DGX_H100-2_GPUs-PyTorch-Ray-{shard}",
+          "platform": "auto:dgx-h100-x2",
+          "testList": "l0_dgx_h100",
+          "splits": 1,
+          "gpuCount": 2
+        },
+        {
+          "name": "DGX_H100-4_GPUs-PyTorch-DeepSeek-{shard}",
+          "platform": "auto:dgx-h100-x4",
+          "testList": "l0_dgx_h100",
+          "splits": 1,
+          "gpuCount": 4
+        },
+        {
+          "name": "DGX_H100-4_GPUs-PyTorch-GptOss-{shard}",
+          "platform": "auto:dgx-h100-x4",
+          "testList": "l0_dgx_h100",
+          "splits": 1,
+          "gpuCount": 4
+        },
+        {
+          "name": "DGX_H100-4_GPUs-PyTorch-Others-{shard}",
+          "platform": "auto:dgx-h100-x4",
+          "testList": "l0_dgx_h100",
+          "splits": 2,
+          "gpuCount": 4
+        },
+        {
+          "name": "DGX_H100-4_GPUs-PyTorch-Ray-{shard}",
+          "platform": "auto:dgx-h100-x4",
+          "testList": "l0_dgx_h100",
+          "splits": 1,
+          "gpuCount": 4
+        },
+        {
+          "name": "DGX_H100-4_GPUs-PyTorch-Post-Merge-{shard}",
+          "platform": "auto:dgx-h100-x4",
+          "testList": "l0_dgx_h100",
+          "splits": 1,
+          "gpuCount": 4
+        },
+        {
+          "name": "DGX_B200-CPP-{shard}",
+          "platform": "auto:dgx-b200-flex",
+          "testList": "l0_b200",
+          "splits": 1,
+          "gpuCount": 1,
+          "nodeCount": 1,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": true
+          }
+        },
+        {
+          "name": "DGX_B200-PyTorch-{shard}",
+          "platform": "auto:dgx-b200-flex",
+          "testList": "l0_b200",
+          "splits": 9,
+          "gpuCount": 1,
+          "nodeCount": 1,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": true
+          }
+        },
+        {
+          "name": "DGX_B200-PyTorch-Post-Merge-{shard}",
+          "platform": "auto:dgx-b200-flex",
+          "testList": "l0_b200",
+          "splits": 2,
+          "gpuCount": 1,
+          "nodeCount": 1,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": true
+          }
+        },
+        {
+          "name": "DGX_B200-2_GPUs-PyTorch-{shard}",
+          "platform": "auto:dgx-b200-flex",
+          "testList": "l0_dgx_b200",
+          "splits": 1,
+          "gpuCount": 2,
+          "nodeCount": 1,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": true
+          }
+        },
+        {
+          "name": "DGX_B200-4_GPUs-PyTorch-{shard}",
+          "platform": "auto:dgx-b200-flex",
+          "testList": "l0_dgx_b200",
+          "splits": 3,
+          "gpuCount": 4,
+          "nodeCount": 1,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": true
+          }
+        },
+        {
+          "name": "DGX_B200-4_GPUs-PyTorch-Ray-{shard}",
+          "platform": "auto:dgx-b200-flex",
+          "testList": "l0_dgx_b200",
+          "splits": 1,
+          "gpuCount": 4,
+          "nodeCount": 1,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": true
+          }
+        },
+        {
+          "name": "DGX_B200-4_GPUs-PyTorch-Post-Merge-{shard}",
+          "platform": "auto:dgx-b200-flex",
+          "testList": "l0_dgx_b200",
+          "splits": 4,
+          "gpuCount": 4,
+          "nodeCount": 1,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": true
+          }
+        },
+        {
+          "name": "DGX_B200-8_GPUs-PyTorch-{shard}",
+          "platform": "auto:dgx-b200-flex",
+          "testList": "l0_dgx_b200",
+          "splits": 4,
+          "gpuCount": 8,
+          "nodeCount": 1,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": true
+          }
+        },
+        {
+          "name": "DGX_B200-6_GPUs-PyTorch-M3-Post-Merge-{shard}",
+          "platform": "auto:dgx-b200-flex",
+          "testList": "l0_dgx_b200_m3_6gpu",
+          "splits": 1,
+          "gpuCount": 6,
+          "nodeCount": 1,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": true
+          }
+        },
+        {
+          "name": "B300-PyTorch-{shard}",
+          "platform": "auto:dgx-b300-flex",
+          "testList": "l0_b300",
+          "splits": 2,
+          "gpuCount": 1,
+          "nodeCount": 1,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": true
+          }
+        },
+        {
+          "name": "B300-PyTorch-Post-Merge-{shard}",
+          "platform": "auto:dgx-b300-flex",
+          "testList": "l0_b300",
+          "splits": 1,
+          "gpuCount": 1,
+          "nodeCount": 1,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": true
+          }
+        },
+        {
+          "name": "DGX_B300-4_GPUs-PyTorch-{shard}",
+          "platform": "auto:dgx-b300-flex",
+          "testList": "l0_dgx_b300",
+          "splits": 1,
+          "gpuCount": 4,
+          "nodeCount": 1,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": true
+          }
+        },
+        {
+          "name": "DGX_B300-2_GPUs-2_Nodes-PyTorch-Disagg-PerfSanity-FUNCTIONAL-ONLY-{shard}",
+          "platform": "b300-flex-aws-pdx",
+          "testList": "l0_dgx_b300_efa_multi_nodes",
+          "splits": 1,
+          "gpuCount": 2,
+          "nodeCount": 2,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": true
+          }
+        },
+        {
+          "name": "DGX_B300-4_GPUs-PyTorch-Post-Merge-{shard}",
+          "platform": "auto:dgx-b300-flex",
+          "testList": "l0_dgx_b300",
+          "splits": 2,
+          "gpuCount": 4,
+          "nodeCount": 1,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": true
+          }
+        },
+        {
+          "name": "DGX_B200-8_GPUs-PyTorch-VisualGen-PerfSanity-Post-Merge-{shard}",
+          "platform": "auto:dgx-b200-flex",
+          "testList": "l0_b200_visual_gen_perf_sanity",
+          "splits": 1,
+          "gpuCount": 8,
+          "nodeCount": 1,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": true
+          }
+        },
+        {
+          "name": "DGX_B200-PyTorch-PerfSanity-Post-Merge-{shard}",
+          "platform": "auto:dgx-b200-flex",
+          "testList": "l0_b200_perf_sanity",
+          "splits": 1,
+          "gpuCount": 1,
+          "nodeCount": 1,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": true
+          }
+        },
+        {
+          "name": "DGX_B200-8_GPUs-PyTorch-PerfSanity-Post-Merge-{shard}",
+          "platform": "auto:dgx-b200-flex",
+          "testList": "l0_b200_multi_gpus_perf_sanity",
+          "splits": 1,
+          "gpuCount": 8,
+          "nodeCount": 1,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": true
+          }
+        },
+        {
+          "name": "GR100-PyTorch-Post-Merge-{shard}",
+          "platform": "auto:gr100-x1",
+          "testList": "l0_gr100",
+          "splits": 1
+        }
+      ]
+    },
+    {
+      "name": "SBSATestConfigs",
+      "arch": "sbsa",
+      "runner": "kubernetes",
+      "stages": [
+        {
+          "name": "CPU-Generic-arm-{shard}",
+          "platform": "cpu",
+          "testList": "l0_cpu",
+          "splits": 2
+        },
+        {
+          "name": "GH200-PyTorch-Post-Merge-{shard}",
+          "platform": "gh200",
+          "testList": "l0_gh200",
+          "splits": 1
+        },
+        {
+          "name": "GB10-PyTorch-{shard}",
+          "platform": "gb10x",
+          "testList": "l0_gb10",
+          "splits": 1
+        }
+      ]
+    },
+    {
+      "name": "SBSASlurmTestConfigs",
+      "arch": "sbsa",
+      "runner": "slurmAgent",
+      "stages": [
+        {
+          "name": "GB200-4_GPUs-PyTorch-{shard}",
+          "platform": "auto:gb200-x4",
+          "testList": "l0_gb200_multi_gpus",
+          "splits": 5,
+          "gpuCount": 4,
+          "nodeCount": 1,
+          "options": {
+            "runWithSbatch": false,
+            "useClusterDurations": true
+          }
+        },
+        {
+          "name": "GB200-4_GPUs-PyTorch-Post-Merge-{shard}",
+          "platform": "auto:gb200-x4",
+          "testList": "l0_gb200_multi_gpus",
+          "splits": 2,
+          "gpuCount": 4,
+          "nodeCount": 1,
+          "options": {
+            "runWithSbatch": false,
+            "useClusterDurations": true
+          }
+        },
+        {
+          "name": "GB10-PyTorch-Post-Merge-{shard}",
+          "platform": "gb10x-single",
+          "testList": "l0_gb10",
+          "splits": 1
+        },
+        {
+          "name": "GB300-4_GPUs-PyTorch-{shard}",
+          "platform": "auto:gb300-x4",
+          "testList": "l0_gb300",
+          "splits": 1,
+          "gpuCount": 4,
+          "nodeCount": 1,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": true,
+            "useClusterDurations": false
+          }
+        },
+        {
+          "name": "GB300-4_GPUs-PyTorch-Post-Merge-{shard}",
+          "platform": "auto:gb300-x4",
+          "testList": "l0_gb300_multi_gpus",
+          "splits": 3,
+          "gpuCount": 4,
+          "nodeCount": 1,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": true,
+            "useClusterDurations": false
+          }
+        },
+        {
+          "name": "GB200-4_GPUs-PyTorch-PerfSanity-Post-Merge-{shard}",
+          "platform": "auto:gb200-x4",
+          "testList": "l0_gb200_multi_gpus_perf_sanity",
+          "splits": 1,
+          "gpuCount": 4
+        },
+        {
+          "name": "GB300-4_GPUs-PyTorch-PerfSanity-Post-Merge-{shard}",
+          "platform": "auto:gb300-x4",
+          "testList": "l0_gb300_multi_gpus_perf_sanity",
+          "splits": 7,
+          "gpuCount": 4,
+          "nodeCount": 1,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": true,
+            "useClusterDurations": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "multiNodesSBSAConfigs",
+      "arch": "sbsa",
+      "runner": "slurmAgent",
+      "stages": [
+        {
+          "name": "GB200-8_GPUs-2_Nodes-PyTorch-{shard}",
+          "platform": "auto:gb200-flex",
+          "testList": "l0_gb200_multi_nodes",
+          "splits": 2,
+          "gpuCount": 8,
+          "nodeCount": 2,
+          "runner": "sbatch"
+        },
+        {
+          "name": "GB200-8_GPUs-2_Nodes-PyTorch-Post-Merge-{shard}",
+          "platform": "auto:gb200-flex",
+          "testList": "l0_gb200_multi_nodes",
+          "splits": 3,
+          "gpuCount": 8,
+          "nodeCount": 2,
+          "runner": "sbatch"
+        },
+        {
+          "name": "GB300-8_GPUs-2_Nodes-PyTorch-SingleNvlinkDomain-Post-Merge-{shard}",
+          "platform": "auto:gb300-flex",
+          "testList": "l0_gb300_multi_nodes_node2_gpu8",
+          "splits": 1,
+          "gpuCount": 8,
+          "nodeCount": 2,
+          "runner": "sbatch"
+        },
+        {
+          "name": "GB300-16_GPUs-4_Nodes-PyTorch-SingleNvlinkDomain-Post-Merge-{shard}",
+          "platform": "auto:gb300-flex",
+          "testList": "l0_gb300_multi_nodes_node4_gpu16",
+          "splits": 1,
+          "gpuCount": 16,
+          "nodeCount": 4,
+          "runner": "sbatch"
+        },
+        {
+          "name": "GB200-8_GPUs-2_Nodes-PyTorch-PerfSanity-Node2-GPU8-Post-Merge-{shard}",
+          "platform": "auto:gb200-flex",
+          "testList": "l0_gb200_multi_nodes_perf_sanity_node2_gpu8",
+          "splits": 2,
+          "gpuCount": 8,
+          "nodeCount": 2,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": false,
+            "useClusterDurations": false
+          },
+          "discoverable": false
+        },
+        {
+          "name": "GB200-8_GPUs-2_Nodes-PyTorch-Disagg-PerfSanity-CTX1-NODE1-GPU1-GEN1-NODE1-GPU4-Post-Merge-{shard}",
+          "platform": "auto:gb200-flex",
+          "testList": "l0_gb200_multi_nodes_perf_sanity_ctx1_node1_gpu1_gen1_node1_gpu4",
+          "splits": 2,
+          "gpuCount": 8,
+          "nodeCount": 2,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": false,
+            "useClusterDurations": false
+          },
+          "discoverable": false
+        },
+        {
+          "name": "GB200-12_GPUs-3_Nodes-PyTorch-Disagg-PerfSanity-CTX1-NODE1-GPU1-GEN1-NODE2-GPU8-Post-Merge-{shard}",
+          "platform": "auto:gb200-flex",
+          "testList": "l0_gb200_multi_nodes_perf_sanity_ctx1_node1_gpu1_gen1_node2_gpu8",
+          "splits": 2,
+          "gpuCount": 12,
+          "nodeCount": 3,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": false,
+            "useClusterDurations": false
+          },
+          "discoverable": false
+        },
+        {
+          "name": "GB200-8_GPUs-2_Nodes-PyTorch-PerfSanity-GEN1-NODE2-GPU8-Post-Merge-{shard}",
+          "platform": "auto:gb200-flex",
+          "testList": "l0_gb200_multi_nodes_perf_sanity_gen1_node2_gpu8",
+          "splits": 1,
+          "gpuCount": 8,
+          "nodeCount": 2,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": false,
+            "useClusterDurations": false
+          },
+          "discoverable": false
+        },
+        {
+          "name": "GB300-12_GPUs-3_Nodes-PyTorch-Disagg-PerfSanity-CTX1-NODE1-GPU2-GEN1-NODE2-GPU8-Post-Merge-{shard}",
+          "platform": "auto:gb300-flex",
+          "testList": "l0_gb300_multi_nodes_perf_sanity_ctx1_node1_gpu2_gen1_node2_gpu8",
+          "splits": 3,
+          "gpuCount": 12,
+          "nodeCount": 3,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": false,
+            "useClusterDurations": false
+          },
+          "discoverable": false
+        },
+        {
+          "name": "GB300-36_GPUs-9_Nodes-PyTorch-Disagg-PerfSanity-CTX1-NODE1-GPU2-GEN1-NODE8-GPU32-Post-Merge-{shard}",
+          "platform": "auto:gb300-flex",
+          "testList": "l0_gb300_multi_nodes_perf_sanity_ctx1_node1_gpu2_gen1_node8_gpu32",
+          "splits": 1,
+          "gpuCount": 36,
+          "nodeCount": 9,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": false,
+            "useClusterDurations": false
+          },
+          "discoverable": false
+        },
+        {
+          "name": "GB300-36_GPUs-9_Nodes-PyTorch-Disagg-PerfSanity-CTX1-NODE1-GPU4-GEN4-NODE2-GPU8-Post-Merge-{shard}",
+          "platform": "auto:gb300-flex",
+          "testList": "l0_gb300_multi_nodes_perf_sanity_ctx1_node1_gpu4_gen4_node2_gpu8",
+          "splits": 2,
+          "gpuCount": 36,
+          "nodeCount": 9,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": false,
+            "useClusterDurations": false
+          },
+          "discoverable": false
+        },
+        {
+          "name": "GB300-40_GPUs-10_Nodes-PyTorch-Disagg-PerfSanity-CTX6-NODE1-GPU4-GEN1-NODE4-GPU16-Post-Merge-{shard}",
+          "platform": "auto:gb300-flex",
+          "testList": "l0_gb300_multi_nodes_perf_sanity_ctx6_node1_gpu4_gen1_node4_gpu16",
+          "splits": 2,
+          "gpuCount": 40,
+          "nodeCount": 10,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": false,
+            "useClusterDurations": false
+          },
+          "discoverable": false
+        },
+        {
+          "name": "GB300-44_GPUs-11_Nodes-PyTorch-Disagg-PerfSanity-CTX3-NODE1-GPU4-GEN1-NODE8-GPU32-Post-Merge-{shard}",
+          "platform": "auto:gb300-flex",
+          "testList": "l0_gb300_multi_nodes_perf_sanity_ctx3_node1_gpu4_gen1_node8_gpu32",
+          "splits": 2,
+          "gpuCount": 44,
+          "nodeCount": 11,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": false,
+            "useClusterDurations": false
+          },
+          "discoverable": false
+        },
+        {
+          "name": "GB300-56_GPUs-14_Nodes-PyTorch-Disagg-PerfSanity-CTX12-NODE1-GPU4-GEN1-NODE2-GPU8-Post-Merge-{shard}",
+          "platform": "auto:gb300-flex",
+          "testList": "l0_gb300_multi_nodes_perf_sanity_ctx12_node1_gpu4_gen1_node2_gpu8",
+          "splits": 2,
+          "gpuCount": 56,
+          "nodeCount": 14,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": false,
+            "useClusterDurations": false
+          },
+          "discoverable": false
+        },
+        {
+          "name": "GB300-8_GPUs-2_Nodes-PyTorch-PerfSanity-GEN1-NODE2-GPU8-Post-Merge-{shard}",
+          "platform": "auto:gb300-flex",
+          "testList": "l0_gb300_multi_nodes_perf_sanity_gen1_node2_gpu8",
+          "splits": 6,
+          "gpuCount": 8,
+          "nodeCount": 2,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": false,
+            "useClusterDurations": false
+          },
+          "discoverable": false
+        },
+        {
+          "name": "GB300-16_GPUs-4_Nodes-PyTorch-PerfSanity-GEN1-NODE4-GPU16-Post-Merge-{shard}",
+          "platform": "auto:gb300-flex",
+          "testList": "l0_gb300_multi_nodes_perf_sanity_gen1_node4_gpu16",
+          "splits": 2,
+          "gpuCount": 16,
+          "nodeCount": 4,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": false,
+            "useClusterDurations": false
+          },
+          "discoverable": false
+        },
+        {
+          "name": "GB300-32_GPUs-8_Nodes-PyTorch-PerfSanity-GEN1-NODE8-GPU32-Post-Merge-{shard}",
+          "platform": "auto:gb300-flex",
+          "testList": "l0_gb300_multi_nodes_perf_sanity_gen1_node8_gpu32",
+          "splits": 2,
+          "gpuCount": 32,
+          "nodeCount": 8,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": false,
+            "useClusterDurations": false
+          },
+          "discoverable": false
+        },
+        {
+          "name": "GB300-8_GPUs-2_Nodes-PyTorch-Disagg-PerfSanity-CTX1-NODE1-GPU4-GEN1-NODE1-GPU4-Post-Merge-{shard}",
+          "platform": "auto:gb300-flex",
+          "testList": "l0_gb300_multi_nodes_perf_sanity_ctx1_node1_gpu4_gen1_node1_gpu4",
+          "splits": 2,
+          "gpuCount": 8,
+          "nodeCount": 2,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": false,
+            "useClusterDurations": false
+          },
+          "discoverable": false
+        },
+        {
+          "name": "GB300-28_GPUs-7_Nodes-PyTorch-Disagg-PerfSanity-CTX1-NODE1-GPU4-GEN6-NODE1-GPU4-Post-Merge-{shard}",
+          "platform": "auto:gb300-flex",
+          "testList": "l0_gb300_multi_nodes_perf_sanity_ctx1_node1_gpu4_gen6_node1_gpu4",
+          "splits": 2,
+          "gpuCount": 28,
+          "nodeCount": 7,
+          "runner": "sbatch",
+          "options": {
+            "runWithSbatch": false,
+            "useClusterDurations": false
+          },
+          "discoverable": false
+        }
+      ]
+    }
+  ]
+}

@@ -653,7 +653,7 @@ def test_fat_sqsh_builder_reads_the_package_through_fetch_helper() -> None:
     key = """printf '%s' "${FAT_LLM_TAR_ARTIFACT_PATH}|${FAT_LLM_DOCKER_IMAGE}|"""
     assert key in body
     assert key in prepare
-    l0_key = "printf '%s' '${llmTarArtifactPath}|${pipeline.LLM_DOCKER_IMAGE}|${scriptHash}'"
+    l0_key = "printf '%s' '${llmTarArtifactPath}|${this.@pipeline.LLM_DOCKER_IMAGE}|${scriptHash}'"
     assert l0_key in read_pipeline_source(L0_TEST)
 
 

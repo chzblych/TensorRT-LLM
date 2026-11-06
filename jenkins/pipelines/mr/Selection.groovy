@@ -21,7 +21,7 @@ import groovy.transform.Field
 
 def initialize(pipeline)
 {
-    this.pipeline = pipeline
+    this.@pipeline = pipeline
     return this
 }
 
@@ -107,11 +107,11 @@ def getOssComplianceFileChanged(pipeline, globalVars)
 
 def getMultiGpuFileChanged(pipeline, testFilter, globalVars)
 {
-    if (testFilter[(pipeline.DISABLE_MULTI_GPU_TEST)]) {
+    if (testFilter[(pipeline.runParameters.DISABLE_MULTI_GPU_TEST)]) {
         pipeline.echo("Force not run multi-GPU testing.")
         return false
     }
-    if (testFilter[(pipeline.ADD_MULTI_GPU_TEST)] || testFilter[(pipeline.ONLY_MULTI_GPU_TEST)] || testFilter[(pipeline.IS_POST_MERGE)]) {
+    if (testFilter[(pipeline.runParameters.ADD_MULTI_GPU_TEST)] || testFilter[(pipeline.runParameters.ONLY_MULTI_GPU_TEST)] || testFilter[(pipeline.runParameters.IS_POST_MERGE)]) {
         pipeline.echo("Force run multi-GPU testing.")
         return true
     }
@@ -156,6 +156,7 @@ def getMultiGpuFileChanged(pipeline, testFilter, globalVars)
         "jenkins/L0_Test.groovy",
         "jenkins/pipelines/test/",
         "jenkins/pipelines/common/",
+        "jenkins/pipeline-library/",
         "requirements.txt",
         "security_scanning/pyproject.toml",
         "tensorrt_llm/_ipc_utils.py",

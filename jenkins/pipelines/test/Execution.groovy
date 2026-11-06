@@ -20,20 +20,22 @@ import com.nvidia.bloom.SlurmCluster
 import trtllm.exceptions.InfraFailure
 
 @Field def pipeline
+@Field def testerCores
 
-def initialize(pipeline)
+def initialize(pipeline, testerCores)
 {
-    this.pipeline = pipeline
+    this.@pipeline = pipeline
+    this.@testerCores = testerCores
     return this
 }
 
 def getShortenedJenkinsInstanceName() {
-    return pipeline.trtllm_utils.getShortenedInstanceName(pipeline.env.JENKINS_URL ?: Jenkins.instance.rootUrl)
+    return this.@pipeline.trtllm_utils.getShortenedInstanceName(this.@pipeline.env.JENKINS_URL ?: Jenkins.instance.rootUrl)
 }
 
 def isCbtsStage(String stageName) {
     // Pipeline-level eligibility (post-merge gate + kill switch) is decided in L0_MergeRequest.groovy and propagated via testFilter.
-    if (!(pipeline.testFilter[(pipeline.CBTS_COVERAGE)] ?: false)) {
+    if (!(this.@pipeline.testFilter[(this.@pipeline.runParameters.CBTS_COVERAGE)] ?: false)) {
         return false
     }
     // PerfSanity stages skip coverage to avoid skewing measurements.
@@ -48,13 +50,13 @@ def isCbtsStage(String stageName) {
     if (stageName.contains("_GPUs") || stageName.contains("_Nodes")) {
         return false
     }
-    return !pipeline.CBTS_EXCLUDE_STAGES.contains(stageName)
+    return !this.@pipeline.CBTS_EXCLUDE_STAGES.contains(stageName)
 }
 
 def freezeCbtsCoverage(String stageDir) {
     // pytest_sessionfinish already waited for every subscriber to save and leave, so this only
     // settles the directory against a writer CBTS never knew about.
-    pipeline.sh(
+    this.@pipeline.sh(
         returnStatus: true,
         script: """
             mkdir -p ${stageDir}
@@ -172,52 +174,6 @@ def runIsolatedTests(pipeline, preprocessedLists, testCmdLine, llmSrc, stageName
     ]
 }
 
-def executeLLMTestOnSlurm(pipeline, platform, testList, config=pipeline.VANILLA_CONFIG, stageName="Undefined", splitId=1, splits=1, skipInstallWheel=false, runner, String postTag="", boolean useClusterDurations=false, Map retryContext=null, Closure classifySlurmFailure=null)
-{
-    runner {
-        // TODO: refactor the finallyRunner to reuse within slurm or nonslurm job.
-        pipeline.testResults.cacheErrorAndUploadResult(pipeline, stageName, {
-            try {
-                pipeline.testPlatform.runLLMTestlistOnPlatformImpl(pipeline, platform, testList, config, stageName, splitId, splits, skipInstallWheel, postTag, useClusterDurations, retryContext)
-            } catch (InterruptedException e) {
-                throw e
-            } catch (Exception e) {
-                // Label the failure against the SLURM job's terminal state before
-                // cacheErrorAndUploadResult decides junit suppression, so a monitor-
-                // detected infra failure (e.g. slurm-job-still-running) suppresses this
-                // attempt's results and a passing retry stays green. Pipeline aborts
-                // (FlowInterruptedException) must not be relabeled.
-                if (classifySlurmFailure == null || e.getClass().name.contains("FlowInterruptedException")) {
-                    throw e
-                }
-                throw classifySlurmFailure(e)
-            }
-        }, {
-            // If the execution test list is null, remove the test result xml
-            pipeline.sh """
-                ls -al ${stageName}/
-                if ! grep -q '<testcase' ${stageName}/results.xml; then
-                    rm ${stageName}/results.xml || true
-                fi
-            """
-            def llmPath = pipeline.sh (script: "realpath .", returnStdout: true).trim()
-            def llmSrc = "${llmPath}/${pipeline.LLM_ROOT}${config}/TensorRT-LLM/src"
-            // CPP tests will generate test result in ${llmSrc}/cpp/build_backup/, move these files to job result folder
-            pipeline.sh "ls -al ${llmSrc}/cpp/build_backup/ || true"
-            pipeline.sh "ls -al ${llmSrc}/cpp/build/ || true"
-            // Sed for CPP test result
-            pipeline.sh "cd ${llmSrc}/cpp/build_backup/ && sed -i 's/\" classname=\"/\" classname=\"${stageName}./g' *.xml || true"
-            pipeline.sh "cd ${llmSrc}/cpp/build_backup/ && sed -i 's/testsuite name=\"[^\"]*\"/testsuite name=\"${stageName}\"/g' *.xml || true"
-            // Sed for Pytest result
-            pipeline.sh "cd ${stageName} && sed -i 's/testsuite name=\"pytest\"/testsuite name=\"${stageName}\"/g' *.xml || true"
-            // Copy CPP test result
-            pipeline.sh "cp ${llmSrc}/cpp/build_backup/*.xml ${stageName} || true"
-            pipeline.sh "ls -al ${stageName}/"
-        }, false, postTag, true, retryContext)
-    }
-}
-
-// End of Methods to run Slurm job with Jenkins Agent
 
 def getNodeArgs(int nodeCount, int gpuCount, boolean setSegment = false) {
     int gpusPerNode = ((gpuCount / nodeCount) as BigDecimal).setScale(0, BigDecimal.ROUND_CEILING).intValue()
@@ -253,7 +209,7 @@ def getPytestBaseCommandLine(
     def cbtsMode = isCbtsStage(stageName)
 
     // TRT uses half of the host logic cores for engine building which is bad for multi-GPU machines.
-    extraInternalEnv = "__LUNOWUD=\"-thread_pool_size=${pipeline.TESTER_CORES}\""
+    extraInternalEnv = "__LUNOWUD=\"-thread_pool_size=${this.@testerCores}\""
     // CPP test execution is timing out easily, so we always override its internal timeout to the same value as pytest
     extraInternalEnv += " CPP_TEST_TIMEOUT_OVERRIDDEN=${pytestTestTimeout}"
     // Enable NCCL debug information for multi-GPU tests
@@ -296,22 +252,22 @@ def getPytestBaseCommandLine(
     }
 
     def jUnitLogging = "out-err"
-    if (pipeline.ENABLE_UPLOAD_TEST_RESULTS) {
+    if (this.@pipeline.ENABLE_UPLOAD_TEST_RESULTS) {
         jUnitLogging = "all"
     }
 
     def testCmdLine = [
         "LLM_ROOT=${llmSrc}",
         "LLM_BACKEND_ROOT=${llmSrc}/triton_backend",
-        "LLM_MODELS_ROOT=${pipeline.MODEL_CACHE_DIR}",
-        "MODEL_CACHE_DIR=${pipeline.MODEL_CACHE_DIR}",
+        "LLM_MODELS_ROOT=${this.@pipeline.MODEL_CACHE_DIR}",
+        "MODEL_CACHE_DIR=${this.@pipeline.MODEL_CACHE_DIR}",
         "COLUMNS=300",
         extraInternalEnv,
         portEnvVars,
         pytestUtil,
         "pytest",
         "-vv",
-        pipeline.testFilter[(pipeline.DETAILED_LOG)] ? "-s" : "",
+        this.@pipeline.testFilter[(this.@pipeline.runParameters.DETAILED_LOG)] ? "-s" : "",
         "--timeout-method=thread",
         "--apply-test-list-correction",
         "--timeout=${pytestTestTimeout}",
@@ -394,18 +350,18 @@ def getMountListForSlurmTest(SlurmCluster cluster, boolean useSbatch = false)
  * @return The starting port number for this stage's port section
  */
 def getStartingPortForHost(String hostNodeName, String stageName = "") {
-    pipeline.lock(resource: 'globalstate-hostNodePortMap') {
-        def startingPort = pipeline.ciState.hostNodePortMap.get(hostNodeName, pipeline.ciState.BASE_PORT)
+    this.@pipeline.lock(resource: 'globalstate-hostNodePortMap') {
+        def startingPort = this.@pipeline.ciState.hostNodePortMap.get(hostNodeName, this.@pipeline.ciState.BASE_PORT)
 
         // Store the next available starting port for this host
-        def nextPort = startingPort + pipeline.ciState.PORT_SECTION_SIZE
+        def nextPort = startingPort + this.@pipeline.ciState.PORT_SECTION_SIZE
 
         // Wrap around if we exceed MAX_PORT
-        if (nextPort > pipeline.ciState.MAX_PORT) {
-            nextPort = pipeline.ciState.BASE_PORT
+        if (nextPort > this.@pipeline.ciState.MAX_PORT) {
+            nextPort = this.@pipeline.ciState.BASE_PORT
         }
 
-        pipeline.ciState.hostNodePortMap[hostNodeName] = nextPort
+        this.@pipeline.ciState.hostNodePortMap[hostNodeName] = nextPort
 
         return startingPort
     }
@@ -421,7 +377,7 @@ def getStartingPortForHost(String hostNodeName, String stageName = "") {
  * @return The host node name
  */
 def getHostNodeName() {
-    return pipeline.sh(script: '''
+    return this.@pipeline.sh(script: '''
         if [ -n "$HOST_NODE_NAME" ]; then
             echo "$HOST_NODE_NAME"
         else

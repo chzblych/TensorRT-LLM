@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import difflib
 import json
-import re
 import shutil
 from pathlib import Path
 
@@ -51,13 +50,20 @@ from cbts.rules.visual_gen import _is_vg_claim
 pytestmark = pytest.mark.cpu_only
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
-_CPU_STAGE_NAMES = set(
-    re.findall(
-        r'^\s*"(CPU-Generic-[^"]+)":\s*\["cpu",',
-        stage_config_path(_REPO_ROOT / "jenkins/L0_Test.groovy").read_text(),
-        re.MULTILINE,
-    )
-)
+_CPU_STAGE_NAMES = {
+    name
+    for name in parse_stages_from_groovy(_REPO_ROOT / "jenkins/L0_Test.groovy")
+    if name.startswith("CPU-Generic-")
+}
+
+
+def _copy_stage_source(entry: Path) -> None:
+    source = stage_config_path(_REPO_ROOT / "jenkins/L0_Test.groovy")
+    destination = entry.parent / "pipelines/test/stages.json" if source.suffix == ".json" else entry
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, destination)
+    if source.suffix == ".json":
+        entry.touch()
 
 
 def _docs_rule() -> DocsRule:
@@ -231,8 +237,8 @@ def test_docs_rule_combines_with_other_targeted_rules() -> None:
 
 
 def test_docs_stage_matches_jenkins_stage_key() -> None:
-    groovy = stage_config_path(_REPO_ROOT / "jenkins/L0_Test.groovy").read_text()
-    assert f'"{DOCS_STAGE}": [pipeline.docBuildSpec, {{' in groovy
+    groovy = (_REPO_ROOT / "jenkins/pipelines/test/Stages.groovy").read_text()
+    assert f'"{DOCS_STAGE}": [docBuildSpec, {{' in groovy
 
 
 @pytest.mark.parametrize("source", ("entry", "standalone", "monolithic"))
@@ -969,7 +975,7 @@ def test_cbts_changes_require_registered_cpu_scripts_tests(
     repo = tmp_path / "repo"
     groovy = repo / "jenkins/L0_Test.groovy"
     groovy.parent.mkdir(parents=True)
-    shutil.copyfile(stage_config_path(_REPO_ROOT / "jenkins/L0_Test.groovy"), groovy)
+    _copy_stage_source(groovy)
     test_db = repo / "tests/integration/test_lists/test-db"
     test_db.mkdir(parents=True)
     entry = "unittest/scripts" if scripts_registered else "unittest/other"
@@ -1025,7 +1031,7 @@ def test_agent_flow_entrypoint_keeps_only_its_explicit_cpu_stage(tmp_path: Path)
 def test_gpu_test_entrypoint_does_not_add_cpu_stages(tmp_path: Path) -> None:
     groovy = tmp_path / "jenkins/L0_Test.groovy"
     groovy.parent.mkdir(parents=True)
-    shutil.copyfile(stage_config_path(_REPO_ROOT / "jenkins/L0_Test.groovy"), groovy)
+    _copy_stage_source(groovy)
     test_db = tmp_path / "tests/integration/test_lists/test-db"
     test_db.mkdir(parents=True)
     (test_db / "l0_cpu.yml").write_text("l0_cpu:\n- tests: [unittest/other]\n")

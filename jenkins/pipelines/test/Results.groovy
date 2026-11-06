@@ -25,7 +25,7 @@ import trtllm.exceptions.InfraFailure
 
 def initialize(pipeline)
 {
-    this.pipeline = pipeline
+    this.@pipeline = pipeline
     return this
 }
 
@@ -267,8 +267,8 @@ def generateTimeoutTestResultXml(pipeline, stageName) {
 }
 
 def generateStageFailTestResultXml(stageName, subName, failureLog, resultPath) {
-    String resultFiles = pipeline.sh(script: "cd ${stageName} && ls -l ${resultPath} | wc -l", returnStdout: true).trim()
-    pipeline.echo "resultFiles: ${resultFiles}"
+    String resultFiles = this.@pipeline.sh(script: "cd ${stageName} && ls -l ${resultPath} | wc -l", returnStdout: true).trim()
+    this.@pipeline.echo "resultFiles: ${resultFiles}"
     if (resultFiles != "0") {
         return null
     }
@@ -282,7 +282,7 @@ def generateStageFailTestResultXml(stageName, subName, failureLog, resultPath) {
 // generate_rerun_tests_list opens rerun_0/1/2.txt eagerly but removes any that
 // end up empty, so this also guards against a future change to that cleanup.
 def fileHasContent(path) {
-    return pipeline.fileExists(path) && pipeline.readFile(path).trim()
+    return this.@pipeline.fileExists(path) && this.@pipeline.readFile(path).trim()
 }
 
 // Return whether the rerun failed and any typed infra failure classified from
@@ -323,12 +323,12 @@ def rerunFailedTests(pipeline, stageName, llmSrc, testCmdLine, resultFileName="r
     for (times in [1, 2]) {
         def currentRerunTestList = "${rerunDir}/rerun_${times}.txt"
         if (pipeline.fileExists(currentRerunTestList)) {
-            pipeline.count = pipeline.sh(
+            def count = pipeline.sh(
                 script: "grep -v '^[[:space:]]*\$' ${currentRerunTestList} | wc -l",
                 returnStdout: true
             ).trim().toInteger()
-            pipeline.echo "Found ${pipeline.count} ${testType} tests to rerun ${times} time(s)"
-            validLineCount += pipeline.count
+            pipeline.echo "Found ${count} ${testType} tests to rerun ${times} time(s)"
+            validLineCount += count
         }
     }
 
@@ -415,21 +415,21 @@ def rerunFailedTests(pipeline, stageName, llmSrc, testCmdLine, resultFileName="r
 }
 
 def generateRerunReport(stageName, llmSrc) {
-    pipeline.echo "Generating comprehensive rerun report for stage: ${stageName}"
+    this.@pipeline.echo "Generating comprehensive rerun report for stage: ${stageName}"
 
-    def rerunBaseDir = "${pipeline.WORKSPACE}/${stageName}/rerun"
+    def rerunBaseDir = "${this.@pipeline.WORKSPACE}/${stageName}/rerun"
     def regularRerunDir = "${rerunBaseDir}/regular"
 
     // Check if regular rerun directory has rerun_results_*.xml files
-    def hasRegularReruns = pipeline.sh(script: "[ -d '${regularRerunDir}' ] && find '${regularRerunDir}' -name 'rerun_results_*.xml' | head -1 | grep -q . && echo 'true' || echo 'false'", returnStdout: true).trim() == 'true'
+    def hasRegularReruns = this.@pipeline.sh(script: "[ -d '${regularRerunDir}' ] && find '${regularRerunDir}' -name 'rerun_results_*.xml' | head -1 | grep -q . && echo 'true' || echo 'false'", returnStdout: true).trim() == 'true'
 
     // Check if any isolated rerun directories have rerun_results_*.xml files
-    def hasIsolatedReruns = pipeline.sh(script: "find ${rerunBaseDir} -type d -name 'isolated_*' -exec find {} -name 'rerun_results_*.xml' \\; 2>/dev/null | head -1 | grep -q . && echo 'true' || echo 'false'", returnStdout: true).trim() == 'true'
+    def hasIsolatedReruns = this.@pipeline.sh(script: "find ${rerunBaseDir} -type d -name 'isolated_*' -exec find {} -name 'rerun_results_*.xml' \\; 2>/dev/null | head -1 | grep -q . && echo 'true' || echo 'false'", returnStdout: true).trim() == 'true'
 
     // Find isolated tests that have actual rerun results and build mapping
     def isolatedTestsWithReruns = []
     if (hasIsolatedReruns) {
-        def isolatedDirsOutput = pipeline.sh(script: "find ${rerunBaseDir} -type d -name 'isolated_*' 2>/dev/null || true", returnStdout: true).trim()
+        def isolatedDirsOutput = this.@pipeline.sh(script: "find ${rerunBaseDir} -type d -name 'isolated_*' 2>/dev/null || true", returnStdout: true).trim()
         if (isolatedDirsOutput) {
             def isolatedDirs = isolatedDirsOutput.split('\n').findAll { it.trim() }
             isolatedDirs.each { isolatedDir ->
@@ -437,13 +437,13 @@ def generateRerunReport(stageName, llmSrc) {
                 def isolatedNum = isolatedDir.split('/').last().replace('isolated_', '')
 
                 // Check if this isolated directory has any rerun results
-                def hasRerunResults = pipeline.sh(script: "find '${isolatedDir}' -name 'rerun_results_*.xml' | head -1 | grep -q . && echo 'true' || echo 'false'", returnStdout: true).trim() == 'true'
+                def hasRerunResults = this.@pipeline.sh(script: "find '${isolatedDir}' -name 'rerun_results_*.xml' | head -1 | grep -q . && echo 'true' || echo 'false'", returnStdout: true).trim() == 'true'
 
                 if (hasRerunResults) {
                     isolatedTestsWithReruns.add([
                         dir: isolatedDir,
                         num: isolatedNum,
-                        originalResult: "${pipeline.WORKSPACE}/${stageName}/results_isolated_${isolatedNum}.xml"
+                        originalResult: "${this.@pipeline.WORKSPACE}/${stageName}/results_isolated_${isolatedNum}.xml"
                     ])
                 }
             }
@@ -453,34 +453,34 @@ def generateRerunReport(stageName, llmSrc) {
     // Collect rerun result files and corresponding original result files
     def rerunResultFiles = []
 
-    pipeline.echo "Found regular reruns: ${hasRegularReruns}"
-    pipeline.echo "Found isolated tests with reruns: ${isolatedTestsWithReruns.collect { "isolated_${it.num}" }}"
+    this.@pipeline.echo "Found regular reruns: ${hasRegularReruns}"
+    this.@pipeline.echo "Found isolated tests with reruns: ${isolatedTestsWithReruns.collect { "isolated_${it.num}" }}"
 
     if (!hasRegularReruns && !hasIsolatedReruns) {
-        pipeline.echo "No rerun results found, skipping rerun report generation"
+        this.@pipeline.echo "No rerun results found, skipping rerun report generation"
         return
     }
 
     // Specify the stage name correctly for all result xml files.
-    pipeline.sh "cd ${pipeline.WORKSPACE}/${stageName} && find . -name '*.xml' -exec sed -i 's/testsuite name=\"pytest\"/testsuite name=\"${stageName}\"/g' {} + || true"
+    this.@pipeline.sh "cd ${this.@pipeline.WORKSPACE}/${stageName} && find . -name '*.xml' -exec sed -i 's/testsuite name=\"pytest\"/testsuite name=\"${stageName}\"/g' {} + || true"
 
     // Collect all original and rerun result files
     def allInputFiles = []
 
     // ---- Regular test results ----
     // Add original results
-    if (pipeline.fileExists("${pipeline.WORKSPACE}/${stageName}/results.xml")) {
-        allInputFiles.add("${pipeline.WORKSPACE}/${stageName}/results.xml")
+    if (this.@pipeline.fileExists("${this.@pipeline.WORKSPACE}/${stageName}/results.xml")) {
+        allInputFiles.add("${this.@pipeline.WORKSPACE}/${stageName}/results.xml")
         // Add to rerunResultFiles only if it has reruns
         if (hasRegularReruns) {
-            rerunResultFiles.add("${pipeline.WORKSPACE}/${stageName}/results.xml")
+            rerunResultFiles.add("${this.@pipeline.WORKSPACE}/${stageName}/results.xml")
         }
     }
     // Add regular rerun results
     if (hasRegularReruns) {
         for (times in [1, 2]) {
             def rerunFile = "${regularRerunDir}/rerun_results_${times}.xml"
-            if (pipeline.fileExists(rerunFile)) {
+            if (this.@pipeline.fileExists(rerunFile)) {
                 allInputFiles.add(rerunFile)
                 rerunResultFiles.add(rerunFile)
             }
@@ -489,7 +489,7 @@ def generateRerunReport(stageName, llmSrc) {
 
     // ---- Isolated test results ----
     // Add ALL isolated test results to allInputFiles
-    def isolatedResults = pipeline.sh(script: "find ${pipeline.WORKSPACE}/${stageName} -name 'results_isolated_*.xml' 2>/dev/null || true", returnStdout: true).trim()
+    def isolatedResults = this.@pipeline.sh(script: "find ${this.@pipeline.WORKSPACE}/${stageName} -name 'results_isolated_*.xml' 2>/dev/null || true", returnStdout: true).trim()
     if (isolatedResults) {
         isolatedResults.split('\n').each { file ->
             if (file.trim()) {
@@ -499,13 +499,13 @@ def generateRerunReport(stageName, llmSrc) {
     }
     // Add isolated rerun results
     isolatedTestsWithReruns.each { isolatedTest ->
-        if (pipeline.fileExists(isolatedTest.originalResult)) {
+        if (this.@pipeline.fileExists(isolatedTest.originalResult)) {
             rerunResultFiles.add(isolatedTest.originalResult)
-            pipeline.echo "Added isolated result with reruns to rerunResultFiles: ${isolatedTest.originalResult}"
+            this.@pipeline.echo "Added isolated result with reruns to rerunResultFiles: ${isolatedTest.originalResult}"
         }
         for (times in [1, 2]) {
             def rerunFile = "${isolatedTest.dir}/rerun_results_${times}.xml"
-            if (pipeline.fileExists(rerunFile)) {
+            if (this.@pipeline.fileExists(rerunFile)) {
                 allInputFiles.add(rerunFile)
                 rerunResultFiles.add(rerunFile)
             }
@@ -513,42 +513,42 @@ def generateRerunReport(stageName, llmSrc) {
     }
 
     if (allInputFiles.isEmpty()) {
-        pipeline.echo "No valid input files found for rerun report generation"
+        this.@pipeline.echo "No valid input files found for rerun report generation"
         return
     }
 
-    pipeline.echo "Generating rerun report with input files: ${rerunResultFiles.join(',')}"
+    this.@pipeline.echo "Generating rerun report with input files: ${rerunResultFiles.join(',')}"
 
     // Generate comprehensive rerun report
-    pipeline.sh """
+    this.@pipeline.sh """
         python3 ${llmSrc}/jenkins/scripts/test_rerun.py \
         generate_rerun_report \
-        --output-file=${pipeline.WORKSPACE}/${stageName}/rerun_results.xml \
+        --output-file=${this.@pipeline.WORKSPACE}/${stageName}/rerun_results.xml \
         --input-files=${rerunResultFiles.join(",")}
     """
 
     // Update original results xml file with all rerun results for junit
-    pipeline.sh """
+    this.@pipeline.sh """
         python3 ${llmSrc}/jenkins/scripts/test_rerun.py \
         merge_junit_xmls \
-        --output-file=${pipeline.WORKSPACE}/${stageName}/results.xml \
+        --output-file=${this.@pipeline.WORKSPACE}/${stageName}/results.xml \
         --input-files=${allInputFiles.join(",")} \
         --deduplicate
     """
 
     // Upload rerun report
-    if (pipeline.fileExists("${pipeline.WORKSPACE}/${stageName}/rerun_results.html")) {
-        pipeline.trtllm_utils.uploadArtifacts(
-            "${pipeline.WORKSPACE}/${stageName}/rerun_results.html",
-            "${pipeline.UPLOAD_PATH}/rerun_reports/${stageName}_rerun_results.html"
+    if (this.@pipeline.fileExists("${this.@pipeline.WORKSPACE}/${stageName}/rerun_results.html")) {
+        this.@pipeline.trtllm_utils.uploadArtifacts(
+            "${this.@pipeline.WORKSPACE}/${stageName}/rerun_results.html",
+            "${this.@pipeline.UPLOAD_PATH}/rerun_reports/${stageName}_rerun_results.html"
         )
-        pipeline.echo "Test rerun report: https://urm.nvidia.com/artifactory/${pipeline.UPLOAD_PATH}/rerun_reports/${stageName}_rerun_results.html"
+        this.@pipeline.echo "Test rerun report: https://urm.nvidia.com/artifactory/${this.@pipeline.UPLOAD_PATH}/rerun_reports/${stageName}_rerun_results.html"
     }
 
     // Remove isolation results since they are merged into results.xml
-    pipeline.sh "rm -rf ${pipeline.WORKSPACE}/${stageName}/results_isolated_*.xml || true"
+    this.@pipeline.sh "rm -rf ${this.@pipeline.WORKSPACE}/${stageName}/results_isolated_*.xml || true"
 
-    pipeline.echo "Rerun report generation completed for stage: ${stageName}"
+    this.@pipeline.echo "Rerun report generation completed for stage: ${stageName}"
 }
 
 def mergeWaivesTxt(pipeline, llmSrc, stageName) {
@@ -597,22 +597,22 @@ def mergeWaivesTxt(pipeline, llmSrc, stageName) {
 def reusePassedTestResults(llmSrc, stageName, waivesTxt, String postTag = "") {
     try {
         def reusedTests = []
-        def workDir = "${pipeline.WORKSPACE}/${stageName}"
-        pipeline.sh "mkdir -p ${workDir}"
+        def workDir = "${this.@pipeline.WORKSPACE}/${stageName}"
+        this.@pipeline.sh "mkdir -p ${workDir}"
 
         // 1. OpenSearch lookup -- tests that PASSED in a previous pipeline run
         //    for this commit + sibling stage shards. CBTS and non-CBTS results
         //    are merged only at testcase granularity.
         def passedTestListFile = "${workDir}/passed_test_list.txt"
-        def stageNamePattern = pipeline.testSelection.getTestReuseStagePattern(stageName)
-        pipeline.sh """
+        def stageNamePattern = this.@pipeline.testSelection.getTestReuseStagePattern(stageName)
+        this.@pipeline.sh """
             python3 ${llmSrc}/jenkins/scripts/open_search_query.py \
-            --commit-id ${pipeline.env.gitlabCommit} \
+            --commit-id ${this.@pipeline.env.gitlabCommit} \
             --stage-name-pattern '${stageNamePattern}' \
             --output-file ${passedTestListFile}
         """
-        if (pipeline.fileExists(passedTestListFile)) {
-            reusedTests += pipeline.readFile(file: passedTestListFile).readLines().collect { it.trim() }.findAll { it }
+        if (this.@pipeline.fileExists(passedTestListFile)) {
+            reusedTests += this.@pipeline.readFile(file: passedTestListFile).readLines().collect { it.trim() }.findAll { it }
         }
 
         // 2. Prior-attempt recovery -- tests that PASSED in an earlier attempt
@@ -623,25 +623,25 @@ def reusePassedTestResults(llmSrc, stageName, waivesTxt, String postTag = "") {
             def priorXmls = []
             priorTags.each { priorTag ->
                 def tarName = "results-${stageName}${priorTag}.tar.gz"
-                def tarUrl = "https://urm.nvidia.com/artifactory/${pipeline.UPLOAD_PATH}/test-results/${tarName}"
+                def tarUrl = "https://urm.nvidia.com/artifactory/${this.@pipeline.UPLOAD_PATH}/test-results/${tarName}"
                 def priorDir = "${workDir}/prior${priorTag.replace('-', '_')}"
-                pipeline.sh "mkdir -p ${priorDir}"
+                this.@pipeline.sh "mkdir -p ${priorDir}"
                 // Probe with HEAD so we can distinguish "this prior attempt never
                 // uploaded a tarball" (HTTP 404, expected when an attempt died
                 // before its finally block ran) from real errors (auth, 5xx,
                 // network). Only 404 is benign; anything else fails the build
                 // so silent skips don't mask a configuration regression.
-                def httpStatus = pipeline.sh(returnStdout: true,
+                def httpStatus = this.@pipeline.sh(returnStdout: true,
                                     script: "curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 10 --max-time 30 '${tarUrl}'").trim()
                 if (httpStatus == '404') {
-                    pipeline.echo "Prior attempt artifact ${tarName} not present (HTTP 404); skipping"
+                    this.@pipeline.echo "Prior attempt artifact ${tarName} not present (HTTP 404); skipping"
                     return
                 }
                 if (httpStatus != '200') {
-                    pipeline.error "Probing prior attempt artifact ${tarName} returned HTTP ${httpStatus} (expected 200 or 404)"
+                    this.@pipeline.error "Probing prior attempt artifact ${tarName} returned HTTP ${httpStatus} (expected 200 or 404)"
                 }
-                pipeline.sh "cd ${priorDir} && wget -nv -nc '${tarUrl}'"
-                pipeline.sh "cd ${priorDir} && tar -xzf ${tarName}"
+                this.@pipeline.sh "cd ${priorDir} && wget -nv -nc '${tarUrl}'"
+                this.@pipeline.sh "cd ${priorDir} && tar -xzf ${tarName}"
                 // results.xml may live at ${stageName}/results.xml inside the
                 // tar, or at the tar's root depending on how it was packaged.
                 // Scan both. Also match superseded-results*.xml: a suppressed
@@ -649,7 +649,7 @@ def reusePassedTestResults(llmSrc, stageName, waivesTxt, String postTag = "") {
                 // (so the build-level junit does not re-ingest the superseded
                 // attempt), but its PASSED tests are still valid to reuse here --
                 // extract_passed_tests only pulls the passing subset.
-                def xmlFiles = pipeline.sh(returnStdout: true,
+                def xmlFiles = this.@pipeline.sh(returnStdout: true,
                                   script: "find ${priorDir} -maxdepth 4 \\( -name 'results*.xml' -o -name 'superseded-results*.xml' \\) 2>/dev/null | tr '\\n' ',' | sed 's/,\$//'").trim()
                 if (xmlFiles) {
                     priorXmls += xmlFiles.split(',') as List
@@ -657,16 +657,16 @@ def reusePassedTestResults(llmSrc, stageName, waivesTxt, String postTag = "") {
             }
             if (!priorXmls.isEmpty()) {
                 def priorPassedFile = "${workDir}/prior_attempt_passed.txt"
-                pipeline.sh """
+                this.@pipeline.sh """
                     python3 ${llmSrc}/jenkins/scripts/test_rerun.py \
                     extract_passed_tests \
                     --output-file ${priorPassedFile} \
                     --input-files ${priorXmls.join(',')}
                 """
-                if (pipeline.fileExists(priorPassedFile)) {
-                    def priorPasses = pipeline.readFile(file: priorPassedFile).readLines().collect { it.trim() }.findAll { it }
+                if (this.@pipeline.fileExists(priorPassedFile)) {
+                    def priorPasses = this.@pipeline.readFile(file: priorPassedFile).readLines().collect { it.trim() }.findAll { it }
                     if (!priorPasses.isEmpty()) {
-                        pipeline.echo "Reusing ${priorPasses.size()} passed test(s) from prior attempt(s): ${priorTags}"
+                        this.@pipeline.echo "Reusing ${priorPasses.size()} passed test(s) from prior attempt(s): ${priorTags}"
                     }
                     reusedTests += priorPasses
                 }
@@ -680,21 +680,21 @@ def reusePassedTestResults(llmSrc, stageName, waivesTxt, String postTag = "") {
                 "${test} SKIP (Reused from previous pipeline)"
             }.join('\n')
 
-            pipeline.echo "Reused tests:\n${reusedTestsContent}"
+            this.@pipeline.echo "Reused tests:\n${reusedTestsContent}"
 
-            pipeline.sh(label: "Append Reused Tests", script: """
+            this.@pipeline.sh(label: "Append Reused Tests", script: """
 cat >> ${waivesTxt} << 'REUSED_TESTS_EOF'
 ${reusedTestsContent}
 REUSED_TESTS_EOF
 """)
-            pipeline.echo "Appended ${reusedTests.size()} reused tests to ${waivesTxt}"
+            this.@pipeline.echo "Appended ${reusedTests.size()} reused tests to ${waivesTxt}"
         } else {
-            pipeline.echo "No reused tests found"
+            this.@pipeline.echo "No reused tests found"
         }
     } catch (InterruptedException e) {
         throw e
     } catch (Exception e) {
-        pipeline.echo "Failed to add passed test list from previous pipeline run to the waives.txt. Error: ${e.message}"
+        this.@pipeline.echo "Failed to add passed test list from previous pipeline run to the waives.txt. Error: ${e.message}"
     }
 }
 
@@ -710,29 +710,29 @@ def deleteProgressArtifact(stageName, postTag="") {
     // UPLOAD_PATH points to the virtual repo `sw-tensorrt-generic`, which
     // accepts GET/PUT but returns 404 on DELETE. Rewrite to the backing
     // local repo so the delete actually lands.
-    def deletePath = pipeline.UPLOAD_PATH.replaceFirst(/^sw-tensorrt-generic\//, 'sw-tensorrt-generic-local/')
+    def deletePath = this.@pipeline.UPLOAD_PATH.replaceFirst(/^sw-tensorrt-generic\//, 'sw-tensorrt-generic-local/')
     def targetUrl = "https://urm.nvidia.com/artifactory/${deletePath}/test-results/results-${stageName}${postTag}-progress.tar.gz"
     try {
-        pipeline.withCredentials([pipeline.usernamePassword(
+        this.@pipeline.withCredentials([this.@pipeline.usernamePassword(
                 credentialsId: 'urm-artifactory-creds',
                 usernameVariable: 'ART_USER',
                 passwordVariable: 'ART_PASS')]) {
-            def httpStatus = pipeline.sh(
+            def httpStatus = this.@pipeline.sh(
                 script: "curl -sSo /dev/null -w '%{http_code}' --retry 2 -X DELETE -u \"\$ART_USER:\$ART_PASS\" '${targetUrl}'",
                 returnStdout: true
             ).trim()
             if (httpStatus == '204' || httpStatus == '200') {
-                pipeline.echo "[PROGRESS-UPLOAD] ${stageName}: deleted progress tar ${targetUrl}"
+                this.@pipeline.echo "[PROGRESS-UPLOAD] ${stageName}: deleted progress tar ${targetUrl}"
             } else if (httpStatus == '404') {
-                pipeline.echo "[PROGRESS-UPLOAD] ${stageName}: progress tar not found, skipping delete"
+                this.@pipeline.echo "[PROGRESS-UPLOAD] ${stageName}: progress tar not found, skipping delete"
             } else {
-                pipeline.echo "[PROGRESS-UPLOAD] ${stageName}: delete returned HTTP ${httpStatus} (non-fatal)"
+                this.@pipeline.echo "[PROGRESS-UPLOAD] ${stageName}: delete returned HTTP ${httpStatus} (non-fatal)"
             }
         }
     } catch (InterruptedException e) {
         throw e
     } catch (Exception e) {
-        pipeline.echo "[PROGRESS-UPLOAD] ${stageName}: progress tar delete failed (non-fatal): ${e.message}"
+        this.@pipeline.echo "[PROGRESS-UPLOAD] ${stageName}: progress tar delete failed (non-fatal): ${e.message}"
     }
 }
 
@@ -797,7 +797,7 @@ def priorAttemptTags(String postTag) {
     if (innerAttempt == null && podAttempt == null) return []   // no retry encoded
     int outerN = podAttempt ?: 1
     int innerN = innerAttempt ?: 1
-    int maxInner = pipeline.SLURM_INFRA_RETRY_MAX + 1
+    int maxInner = this.@pipeline.SLURM_INFRA_RETRY_MAX + 1
     def priors = []
     // Earlier outer attempts (1..outerN-1) with all possible inner attempts.
     for (int p = 1; p < outerN; p++) {
@@ -816,6 +816,43 @@ def priorAttemptTags(String postTag) {
         }
     }
     return priors
+}
+
+def prepareJenkinsTestResults(pipeline, config, stageName)
+{
+    // If the execution test list is null, remove the test result xml
+    pipeline.sh """
+            ls -al ${stageName}/
+            if ! grep -q '<testcase' ${stageName}/results.xml; then
+                rm ${stageName}/results.xml || true
+            fi
+        """
+    def llmPath = pipeline.sh (script: "realpath .", returnStdout: true).trim()
+    def llmSrc = "${llmPath}/${pipeline.LLM_ROOT}${config}/TensorRT-LLM/src"
+    // CPP tests will generate test result in ${llmSrc}/cpp/build_backup/, move these files to job result folder
+    pipeline.sh "ls -al ${llmSrc}/cpp/build_backup/ || true"
+    pipeline.sh "ls -al ${llmSrc}/cpp/build/ || true"
+    // Sed for CPP test result
+    pipeline.sh "cd ${llmSrc}/cpp/build_backup/ && sed -i 's/\" classname=\"/\" classname=\"${stageName}./g' *.xml || true"
+    pipeline.sh "cd ${llmSrc}/cpp/build_backup/ && sed -i 's/testsuite name=\"[^\"]*\"/testsuite name=\"${stageName}\"/g' *.xml || true"
+    // Sed for Pytest result
+    pipeline.sh "cd ${stageName} && sed -i 's/testsuite name=\"pytest\"/testsuite name=\"${stageName}\"/g' *.xml || true"
+    // Copy CPP test result
+    pipeline.sh "cp ${llmSrc}/cpp/build_backup/*.xml ${stageName} || true"
+    pipeline.sh "ls -al ${stageName}/"
+}
+
+def prepareStageWaives(pipeline, llmSrc, stageName, waivesFilePath, postTag, boolean dryRun, String dryRunParent = null)
+{
+    if (dryRun) {
+        def prefix = dryRunParent == null ? "" : "mkdir -p ${dryRunParent} && "
+        pipeline.sh "${prefix}: > ${waivesFilePath}"
+    } else {
+        mergeWaivesTxt(pipeline, llmSrc, stageName)
+        if (pipeline.testFilter[(pipeline.runParameters.REUSE_TEST)] != false) {
+            reusePassedTestResults(llmSrc, stageName, waivesFilePath, postTag)
+        }
+    }
 }
 
 return this

@@ -29,16 +29,16 @@ import trtllm.exceptions.InfraFailure
 
 def initialize(pipeline)
 {
-    this.pipeline = pipeline
+    this.@pipeline = pipeline
     return this
 }
 
 def scpFromRemoteCmd(Map remote, String remotePath, String localPath) {
     String portOpt = remote.port ? "-P ${remote.port} " : ""
     if (remote.privateKeyPath) {
-        return "scp -i ${remote.privateKeyPath} ${portOpt}-r -p ${pipeline.COMMON_SSH_OPTIONS} ${remote.user}@${remote.host}:${remotePath} ${localPath}"
+        return "scp -i ${remote.privateKeyPath} ${portOpt}-r -p ${this.@pipeline.COMMON_SSH_OPTIONS} ${remote.user}@${remote.host}:${remotePath} ${localPath}"
     }
-    return "sshpass -p '${remote.passwd}' scp ${portOpt}-r -p ${pipeline.COMMON_SSH_OPTIONS} ${remote.user}@${remote.host}:${remotePath} ${localPath}"
+    return "sshpass -p '${remote.passwd}' scp ${portOpt}-r -p ${this.@pipeline.COMMON_SSH_OPTIONS} ${remote.user}@${remote.host}:${remotePath} ${localPath}"
 }
 
 // Print the last `lines` lines of the remote Slurm job log file to the console when the Slurm job fails.
@@ -275,15 +275,15 @@ void registerSlurmResource(String stageName, Map fields) {
         return
     }
     if (fields.containsKey('podSpec')) {
-        pipeline.resourceLedger.register(id: "${stageName}/dispatcher-pod", type: 'k8sDispatcherPod',
+        this.@pipeline.resourceLedger.register(id: "${stageName}/dispatcher-pod", type: 'k8sDispatcherPod',
             fields: [podSpec: fields.podSpec, containerName: fields.containerName],
-            ownerBuildTag: pipeline.env.BUILD_TAG)
+            ownerBuildTag: this.@pipeline.env.BUILD_TAG)
     } else {
-        pipeline.resourceLedger.register(id: "${stageName}/slurm/${fields.jobUID ?: fields.nodeName}",
+        this.@pipeline.resourceLedger.register(id: "${stageName}/slurm/${fields.jobUID ?: fields.nodeName}",
             type: fields.usedSbatch ? 'slurmJob' : 'slurmNode',
             fields: [clusterName: fields.clusterName, nodeName: fields.nodeName,
                      jobUID: fields.jobUID, slurmJobId: fields.slurmJobId, usedSbatch: fields.usedSbatch],
-            ownerBuildTag: pipeline.env.BUILD_TAG)
+            ownerBuildTag: this.@pipeline.env.BUILD_TAG)
     }
 }
 
@@ -295,7 +295,7 @@ void deregisterSlurmResource(String stageName, String attempt) {
     if (!stageName) {
         return
     }
-    pipeline.resourceLedger.markReclaimed("${stageName}/slurm/${attempt}")
+    this.@pipeline.resourceLedger.markReclaimed("${stageName}/slurm/${attempt}")
 }
 
 // Reclaim one orphaned SLURM entry off the (dead) dispatcher pod: launch a fresh
@@ -406,7 +406,7 @@ def querySlurmJobState(def pipeline, SlurmCluster cluster, String clusterName, S
 }
 
 boolean isNonTerminalSlurmState(String state) {
-    return state != null && pipeline.SLURM_NON_TERMINAL_STATES.contains(state.toUpperCase(java.util.Locale.ROOT))
+    return state != null && this.@pipeline.SLURM_NON_TERMINAL_STATES.contains(state.toUpperCase(java.util.Locale.ROOT))
 }
 
 def readSlurmWorkspaceFile(def pipeline, Map remote, String path, String stageName, int numRetries=1)
@@ -449,11 +449,11 @@ def recordSlurmPlacementContext(Map placementContext, String slurmJobID, def nod
         placementContext.slurmJobId = slurmJobID
     }
 
-    def normalized = pipeline.trtllm_utils.normalizeSlurmNodeLists(nodeList)
+    def normalized = this.@pipeline.trtllm_utils.normalizeSlurmNodeLists(nodeList)
     if (!normalized.isEmpty()) {
         placementContext.lastSlurmNodeList = normalized.join(' ')
         def jobLabel = slurmJobID ? "job ${slurmJobID}" : "job"
-        pipeline.echo "[INFRA-RETRY] ${stageName}: SLURM ${jobLabel} ran on node list(s): ${placementContext.lastSlurmNodeList}"
+        this.@pipeline.echo "[INFRA-RETRY] ${stageName}: SLURM ${jobLabel} ran on node list(s): ${placementContext.lastSlurmNodeList}"
     }
 }
 

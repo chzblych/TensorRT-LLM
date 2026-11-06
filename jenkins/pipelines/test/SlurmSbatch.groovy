@@ -30,7 +30,7 @@ import trtllm.exceptions.UserFailure
 
 def initialize(pipeline)
 {
-    this.pipeline = pipeline
+    this.@pipeline = pipeline
     return this
 }
 
@@ -248,17 +248,8 @@ def runLLMTestlistWithSbatch(pipeline, platform, testList, config=pipeline.VANIL
                     script: Utils.sshUserCmd(remote, "\"mv -f ${testListPathNode}.tmp ${testListPathNode}\"")
                 )
 
-                if (infraDryRun) {
-                    pipeline.sh "mkdir -p ${llmPath} && : > ${waivesListPathLocal}"
-                } else {
-                    // Download and Merge waives.txt
-                    pipeline.testResults.mergeWaivesTxt(pipeline, llmSrcLocal, stageName)
-
-                    // Add passed test list from previous pipeline run to the waives.txt
-                    if (pipeline.testFilter[(pipeline.REUSE_TEST)] != false) {
-                        pipeline.testResults.reusePassedTestResults(llmSrcLocal, stageName, waivesListPathLocal, postTag)
-                    }
-                }
+                pipeline.testResults.prepareStageWaives(
+                    pipeline, llmSrcLocal, stageName, waivesListPathLocal, postTag, infraDryRun, llmPath)
 
                 Utils.copyFileToRemoteHost(
                     pipeline,
@@ -380,7 +371,7 @@ def runLLMTestlistWithSbatch(pipeline, platform, testList, config=pipeline.VANIL
                     "--group $splitId",
                     *clusterDurationsArgsNode,
                 ]
-                if (pipeline.ENABLE_UPLOAD_TEST_RESULTS && !pipeline.testFilter[(pipeline.DETAILED_LOG)]) {
+                if (pipeline.ENABLE_UPLOAD_TEST_RESULTS && !pipeline.testFilter[(pipeline.runParameters.DETAILED_LOG)]) {
                     extraArgs += [
                         "--capture=fd",
                         "--s3-upload-path=${uploadPath}/${stageName}",

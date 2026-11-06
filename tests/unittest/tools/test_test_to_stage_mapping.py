@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
 import random
 import re
@@ -229,6 +230,35 @@ def test_stage_mapping_resolves_modular_and_standalone_sources(
 
     assert forward == {expected_stage: 'l0_a10.yml'}
     assert dict(reverse) == {'l0_a10.yml': [expected_stage]}
+
+
+def test_stage_mapping_expands_canonical_catalog(tmp_path):
+    entry = tmp_path / 'jenkins' / 'L0_Test.groovy'
+    catalog = entry.parent / 'pipelines' / 'test' / 'stages.json'
+    catalog.parent.mkdir(parents=True)
+    with open(
+            os.path.join(REPO_ROOT, 'jenkins', 'pipelines', 'test',
+                         'stages.json')) as source:
+        data = json.load(source)
+    for group in data['groups']:
+        group['stages'] = [{
+            'name': 'A10-PyTorch-{shard}',
+            'platform': 'a10',
+            'testList': 'l0_a10',
+            'splits': 3,
+        }] if group['name'] == 'x86TestConfigs' else []
+    catalog.write_text(json.dumps(data))
+
+    forward, reverse = StageQuery._parse_stage_mapping(str(entry))
+
+    names = [f'A10-PyTorch-{shard}' for shard in range(1, 4)]
+    assert forward == {name: 'l0_a10.yml' for name in names}
+    assert dict(reverse) == {'l0_a10.yml': names}
+    custom = entry.with_name('custom.groovy')
+    custom.write_text('"Custom-PyTorch-1": ["a10", "l0_a10", 1, 1],\n')
+    assert StageQuery._parse_stage_mapping(str(custom))[0] == {
+        'Custom-PyTorch-1': 'l0_a10.yml'
+    }
 
 
 @pytest.mark.parametrize("direction",

@@ -29,7 +29,7 @@ import trtllm.exceptions.UserFailure
 
 def initialize(pipeline)
 {
-    this.pipeline = pipeline
+    this.@pipeline = pipeline
     return this
 }
 
@@ -189,7 +189,7 @@ def recordRenderedStageAttemptEstimate(pipeline, String llmSrc, String testListP
 
 long estimateStageRetryRuntimeMs(String stageName, String scope)
 {
-    Long testEstimateValue = pipeline.trtllm_utils.parseCiBudgetLong(pipeline.ciState.stageAttemptEstimateMs[stageName])
+    Long testEstimateValue = this.@pipeline.trtllm_utils.parseCiBudgetLong(this.@pipeline.ciState.stageAttemptEstimateMs[stageName])
     long testEstimateMs = testEstimateValue != null ? testEstimateValue : 0L
     if (testEstimateMs > 0L) {
         long overheadMs = scope == InfraFailure.SLURM ? 45L * 60L * 1000L : 30L * 60L * 1000L
@@ -210,7 +210,7 @@ long retrySafetyMarginMs(String scope)
 // still yields 1, and infraRetryMax=0 disables. Null falls back to the default.
 int resolveInfraRetryMax(String scope, Integer override)
 {
-    int scopeDefault = (scope == InfraFailure.SLURM) ? pipeline.SLURM_INFRA_RETRY_MAX : pipeline.K8S_INFRA_RETRY_MAX
+    int scopeDefault = (scope == InfraFailure.SLURM) ? this.@pipeline.SLURM_INFRA_RETRY_MAX : this.@pipeline.K8S_INFRA_RETRY_MAX
     if (override == null) {
         return scopeDefault
     }
@@ -274,7 +274,7 @@ def preservePrimaryFailure(Throwable primaryError, Closure actions)
     } catch (Exception e) {
         // Post-processing failures must not replace the failure that triggered them.
         if (primaryError == null || FailureClassifier.classify(e, InfraFailure.BOTH) instanceof PipelineInterruption) throw e
-        pipeline.echo "[INFRA-RETRY] Secondary failure while handling ${primaryError}:\n${Utils.getStackTrace(e)}"
+        this.@pipeline.echo "[INFRA-RETRY] Secondary failure while handling ${primaryError}:\n${Utils.getStackTrace(e)}"
     }
 }
 
@@ -298,14 +298,14 @@ boolean retryContextAllowsRetry(def pipeline, Map retryContext, Throwable error,
 
 def rememberAvoidedKubernetesHostNodes(List avoidedNodes, def nodes, String stageName)
 {
-    def hostNodes = pipeline.trtllm_utils.normalizeKubernetesHostNames(nodes)
+    def hostNodes = this.@pipeline.trtllm_utils.normalizeKubernetesHostNames(nodes)
     hostNodes.each { nodeName ->
         if (!avoidedNodes.contains(nodeName)) {
             avoidedNodes << nodeName
         }
     }
     if (!hostNodes.isEmpty()) {
-        pipeline.echo "[INFRA-RETRY] ${stageName}: recorded Kubernetes host node(s) for retry avoidance: ${hostNodes.join(', ')}"
+        this.@pipeline.echo "[INFRA-RETRY] ${stageName}: recorded Kubernetes host node(s) for retry avoidance: ${hostNodes.join(', ')}"
     }
 }
 
@@ -317,7 +317,7 @@ def rememberAvoidedSlurmNodeLists(Map avoidedNodeListsByCluster, String clusterN
     if (!clusterName) {
         return
     }
-    def nodeLists = pipeline.trtllm_utils.normalizeSlurmNodeLists(nodes)
+    def nodeLists = this.@pipeline.trtllm_utils.normalizeSlurmNodeLists(nodes)
     if (nodeLists.isEmpty()) {
         return
     }
@@ -331,7 +331,7 @@ def rememberAvoidedSlurmNodeLists(Map avoidedNodeListsByCluster, String clusterN
             clusterNodeLists << nodeList
         }
     }
-    pipeline.echo "[INFRA-RETRY] ${stageName}: recorded SLURM node list(s) for retry avoidance on ${clusterName}: ${nodeLists.join(', ')}"
+    this.@pipeline.echo "[INFRA-RETRY] ${stageName}: recorded SLURM node list(s) for retry avoidance on ${clusterName}: ${nodeLists.join(', ')}"
 }
 
 // Deferrable-infra predicate for trtllm_utils.runBranchesWithInfraDefer. Every

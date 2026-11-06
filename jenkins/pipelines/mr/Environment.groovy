@@ -22,7 +22,7 @@ import groovy.json.JsonSlurper
 
 def initialize(pipeline)
 {
-    this.pipeline = pipeline
+    this.@pipeline = pipeline
     return this
 }
 
@@ -31,19 +31,19 @@ def getContainerURIs()
 {
     // available tags can be found in: https://artifactory.nvidia.com/artifactory/sw-tensorrt-llm-docker-local/tensorrt-llm/
     // [base_image_name]-[arch]-[os](-[python_version])-[trt_version]-[torch_install_type]-[stage]-[date]-[mr_id]
-    pipeline.tagProps = pipeline.readProperties file: "${pipeline.LLM_ROOT}/jenkins/current_image_tags.properties", interpolate: true
-    pipeline.uris = [:]
-    pipeline.keys = [
+    def tagProps = this.@pipeline.readProperties file: "${this.@pipeline.LLM_ROOT}/jenkins/current_image_tags.properties", interpolate: true
+    def uris = [:]
+    def keys = [
         "LLM_DOCKER_IMAGE",
         "LLM_SBSA_DOCKER_IMAGE",
         "LLM_SBSA_WHEEL_DOCKER_IMAGE",
         "LLM_ROCKYLINUX8_PY310_DOCKER_IMAGE",
         "LLM_ROCKYLINUX8_PY312_DOCKER_IMAGE"
     ]
-    for (key in pipeline.keys) {
-        pipeline.uris[key] = pipeline.tagProps[key]
+    for (def key in keys) {
+        uris[key] = tagProps[key]
     }
-    return pipeline.uris
+    return uris
 }
 
 def echoNodeAndGpuInfo(pipeline, stageName)
@@ -55,16 +55,16 @@ def echoNodeAndGpuInfo(pipeline, stageName)
 
 def getReleaseRepo()
 {
-    def ciVersions = pipeline.readProperties file: "${pipeline.LLM_ROOT}/jenkins/ci_versions.properties"
+    def ciVersions = this.@pipeline.readProperties file: "${this.@pipeline.LLM_ROOT}/jenkins/ci_versions.properties"
     def commit = ciVersions.TRTLLM_RELEASE_REPO
-    def overrideCommit = pipeline.env."TRTLLM_RELEASE_REPO_OVERRIDE_${commit}"
+    def overrideCommit = this.@pipeline.env."TRTLLM_RELEASE_REPO_OVERRIDE_${commit}"
     if (overrideCommit) {
-        pipeline.echo "Overriding TRTLLM_RELEASE_REPO commit with value from environment variable \$TRTLLM_RELEASE_REPO_OVERRIDE_${commit}: ${overrideCommit}"
+        this.@pipeline.echo "Overriding TRTLLM_RELEASE_REPO commit with value from environment variable \$TRTLLM_RELEASE_REPO_OVERRIDE_${commit}: ${overrideCommit}"
         commit = overrideCommit
     }
     def url = ""
-    pipeline.withCredentials([pipeline.string(credentialsId: "TRTLLM_RELEASE_REPO", variable: "RELEASE_REPO_URL")]) {
-        url = pipeline.RELEASE_REPO_URL
+    this.@pipeline.withCredentials([this.@pipeline.string(credentialsId: "TRTLLM_RELEASE_REPO", variable: "RELEASE_REPO_URL")]) {
+        url = this.@pipeline.RELEASE_REPO_URL
     }
     return [url: url, commit: commit]
 }
@@ -74,28 +74,28 @@ def checkoutTargetBranchFile(String targetBranch, String targetCommit, String so
     if (targetCommit) {
         def outputFile = "${outputPrefix}_${targetCommit}.txt"
         try {
-            pipeline.sh "wget https://artifactory.pdx.nvidia.com/artifactory/vcs-remote/NVIDIA/TensorRT-LLM/raw/" +
+            this.@pipeline.sh "wget https://artifactory.pdx.nvidia.com/artifactory/vcs-remote/NVIDIA/TensorRT-LLM/raw/" +
                "${targetCommit}/${sourcePath} -O ${outputFile}"
             return outputFile
         } catch (InterruptedException e) {
             throw e
         } catch (Exception e) {
-            pipeline.echo "Failed to checkout ${sourcePath} by public target commit. Error: ${e.toString()}"
+            this.@pipeline.echo "Failed to checkout ${sourcePath} by public target commit. Error: ${e.toString()}"
         }
     }
 
     def outputFile = "${outputPrefix}.txt"
     try {
-        pipeline.withCredentials([pipeline.string(credentialsId: 'default-llm-repo', variable: 'DEFAULT_LLM_REPO')]) {
-            pipeline.trtllm_utils.checkoutFile(pipeline.DEFAULT_LLM_REPO, targetBranch, sourcePath, ".")
+        this.@pipeline.withCredentials([this.@pipeline.string(credentialsId: 'default-llm-repo', variable: 'DEFAULT_LLM_REPO')]) {
+            this.@pipeline.trtllm_utils.checkoutFile(this.@pipeline.DEFAULT_LLM_REPO, targetBranch, sourcePath, ".")
         }
         def sourceFileName = sourcePath.tokenize('/').last()
-        pipeline.sh "mv ${sourceFileName} ${outputFile}"
+        this.@pipeline.sh "mv ${sourceFileName} ${outputFile}"
         return outputFile
     } catch (InterruptedException e) {
         throw e
     } catch (Exception e) {
-        pipeline.echo "Failed to checkout ${sourcePath} from internal GitLab at ref " +
+        this.@pipeline.echo "Failed to checkout ${sourcePath} from internal GitLab at ref " +
              "${targetBranch}. Error: ${e.toString()}"
     }
     return ""
@@ -109,14 +109,13 @@ def mergeWaiveList(pipeline, globalVars)
     pipeline.sh "cp ${pipeline.LLM_ROOT}/jenkins/scripts/mergeWaiveList.py ./"
 
     // Get TOT waive list
-    pipeline.LLM_TOT_ROOT = "llm-tot"
-    pipeline.targetBranch = pipeline.env.gitlabTargetBranch ? pipeline.env.gitlabTargetBranch : globalVars[pipeline.TARGET_BRANCH]
-    pipeline.echo "Target branch: ${pipeline.targetBranch}"
+    def targetBranch = pipeline.env.gitlabTargetBranch ? pipeline.env.gitlabTargetBranch : globalVars[pipeline.runParameters.TARGET_BRANCH]
+    pipeline.echo "Target branch: ${targetBranch}"
 
     def targetBranchTOTCommit = ""
     try {
         pipeline.withCredentials([pipeline.usernamePassword(credentialsId: 'svc_tensorrt_gitlab_api_token', usernameVariable: 'GITHUB_USER', passwordVariable: 'GITHUB_PASSWORD')]) {
-            def apiUrl = "https://api.github.com/repos/NVIDIA/TensorRT-LLM/commits?sha=${pipeline.targetBranch}&per_page=1"
+            def apiUrl = "https://api.github.com/repos/NVIDIA/TensorRT-LLM/commits?sha=${targetBranch}&per_page=1"
             def connection = new URL(apiUrl).openConnection()
             connection.setRequestProperty("Authorization", "Basic " + "${pipeline.GITHUB_USER}:${pipeline.GITHUB_PASSWORD}".bytes.encodeBase64().toString())
             connection.setRequestMethod("GET")
@@ -132,14 +131,14 @@ def mergeWaiveList(pipeline, globalVars)
     }
 
     def waiveTot = checkoutTargetBranchFile(
-        pipeline.targetBranch, targetBranchTOTCommit, "tests/integration/test_lists/waives.txt", "waives_TOT")
+        targetBranch, targetBranchTOTCommit, "tests/integration/test_lists/waives.txt", "waives_TOT")
     if (!waiveTot) {
         pipeline.catchError(
             buildResult: 'SUCCESS',
             stageResult: 'UNSTABLE') {
             pipeline.error "Failed to get TOT waive list. Fallback to use the default test waive list from the PR."
         }
-        return [targetBranch: pipeline.targetBranch, targetCommit: targetBranchTOTCommit]
+        return [targetBranch: targetBranch, targetCommit: targetBranchTOTCommit]
     }
 
     try {
@@ -172,7 +171,7 @@ def mergeWaiveList(pipeline, globalVars)
             pipeline.error "Merge test waive list failed. Fallback to use the default test waive list from the PR. Error: ${e.toString()}"
         }
     }
-    return [targetBranch: pipeline.targetBranch, targetCommit: targetBranchTOTCommit]
+    return [targetBranch: targetBranch, targetCommit: targetBranchTOTCommit]
 }
 
 def getMaintenanceStageList(pipeline, globalVars, Map targetBranchInfo)
@@ -189,7 +188,7 @@ def getMaintenanceStageList(pipeline, globalVars, Map targetBranchInfo)
             stageResult: 'UNSTABLE') {
             pipeline.error "Failed to get target maintenance config. No maintenance stages will be skipped."
         }
-        globalVars[pipeline.MAINTENANCE_ENTRIES] = [reason: "", patterns: []]
+        globalVars[pipeline.runParameters.MAINTENANCE_ENTRIES] = [reason: "", patterns: []]
     } else {
         if (!pipeline.fileExists(maintenanceSource)) {
             def changedFileList = pipeline.mrChanges.getMRChangedFile(pipeline, globalVars, "getChangedFileList")
@@ -221,10 +220,10 @@ def getMaintenanceStageList(pipeline, globalVars, Map targetBranchInfo)
             --diff-file=maintenance_diff_content.txt \
             --output-file=maintenance_entries.json
         """
-        globalVars[pipeline.MAINTENANCE_ENTRIES] = pipeline.readJSON(
+        globalVars[pipeline.runParameters.MAINTENANCE_ENTRIES] = pipeline.readJSON(
             file: 'maintenance_entries.json', returnPojo: true)
     }
-    pipeline.echo "Effective maintenance entries: ${globalVars[pipeline.MAINTENANCE_ENTRIES]}"
+    pipeline.echo "Effective maintenance entries: ${globalVars[pipeline.runParameters.MAINTENANCE_ENTRIES]}"
 }
 
 return this

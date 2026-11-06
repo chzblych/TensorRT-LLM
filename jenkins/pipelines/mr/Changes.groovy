@@ -21,7 +21,7 @@ import groovy.transform.Field
 
 def initialize(pipeline)
 {
-    this.pipeline = pipeline
+    this.@pipeline = pipeline
     return this
 }
 
@@ -140,9 +140,9 @@ def getGithubMRChangedFile(pipeline, githubPrApiUrl, function, filePath="") {
 def getGitMirrorMRChangedFile(pipeline, globalVars, function, filePath="", filePaths=[]) {
     def headCommit = pipeline.env.gitlabCommit?.toString()
     // The merge queue names the base commit; for a PR, the wrapper pushed the base to the mirror.
-    def baseRef = globalVars[pipeline.BASE_COMMIT]
+    def baseRef = globalVars[pipeline.runParameters.BASE_COMMIT]
     if (!baseRef) {
-        def wrapperBuildNumber = globalVars[pipeline.ACTION_INFO]?.get("parents")?.getAt(0)?.get("build_number")?.toString()
+        def wrapperBuildNumber = globalVars[pipeline.runParameters.ACTION_INFO]?.get("parents")?.getAt(0)?.get("build_number")?.toString()
         baseRef = "refs/heads/prjob/${wrapperBuildNumber}/base"
     }
     pipeline.withEnv(["GIT_DIFF_BASE_REF=${baseRef}"]) {
@@ -213,7 +213,7 @@ def getGitMirrorMRChangedFile(pipeline, globalVars, function, filePath="", fileP
 
 def getGithubMRChangedFileWithFallback(pipeline, globalVars, function, filePath="", filePaths=[]) {
     try {
-        return getGithubMRChangedFile(pipeline, globalVars[pipeline.GITHUB_PR_API_URL], function, filePath)
+        return getGithubMRChangedFile(pipeline, globalVars[pipeline.runParameters.GITHUB_PR_API_URL], function, filePath)
     } catch (InterruptedException e) {
         throw e
     } catch (Exception e) {
@@ -235,9 +235,9 @@ def getGithubMRChangedFileWithFallback(pipeline, globalVars, function, filePath=
 //  - getFileChanges -> map of path to diff, for the paths in `filePaths`
 def getMRChangedFile(pipeline, globalVars, function, filePath="", filePaths=[]) {
     def result
-    if (globalVars[pipeline.GITHUB_PR_API_URL]) {
+    if (globalVars[pipeline.runParameters.GITHUB_PR_API_URL]) {
         result = getGithubMRChangedFileWithFallback(pipeline, globalVars, function, filePath, filePaths)
-    } else if (globalVars[pipeline.BASE_COMMIT]) {
+    } else if (globalVars[pipeline.runParameters.BASE_COMMIT]) {
         result = getGitMirrorMRChangedFile(pipeline, globalVars, function, filePath, filePaths)
     } else {
         result = getGitlabMRChangedFile(pipeline, function, filePath)
@@ -253,7 +253,7 @@ def getMRChangedFile(pipeline, globalVars, function, filePath="", filePaths=[]) 
 // both label existence and that the labeler is an active team member.
 // Exempt: PostMerge pipelines and GitLab MR builds (no GITHUB_PR_API_URL).
 def requireMultiGpuApprovalLabel(pipeline, globalVars, String arch) {
-    if (!globalVars[pipeline.GITHUB_PR_API_URL]) {
+    if (!globalVars[pipeline.runParameters.GITHUB_PR_API_URL]) {
         pipeline.echo "[requireMultiGpuApprovalLabel] Skipping label check: not a GitHub PR (no GITHUB_PR_API_URL)"
         return false
     }
@@ -262,9 +262,9 @@ def requireMultiGpuApprovalLabel(pipeline, globalVars, String arch) {
         return false
     }
 
-    def prMatch = (globalVars[pipeline.GITHUB_PR_API_URL] =~ /\/pulls?\/(\d+)/)
+    def prMatch = (globalVars[pipeline.runParameters.GITHUB_PR_API_URL] =~ /\/pulls?\/(\d+)/)
     if (!prMatch) {
-        pipeline.echo "[requireMultiGpuApprovalLabel] Could not extract PR number from ${globalVars[pipeline.GITHUB_PR_API_URL]}. Failing open."
+        pipeline.echo "[requireMultiGpuApprovalLabel] Could not extract PR number from ${globalVars[pipeline.runParameters.GITHUB_PR_API_URL]}. Failing open."
         return false
     }
     def prNumber = prMatch[0][1]
@@ -304,21 +304,21 @@ def getMergeRequestChangedFileList(pipeline, globalVars) {
         return []
     }
 
-    if (globalVars[pipeline.CACHED_CHANGED_FILE_LIST] != null) {
-        return globalVars[pipeline.CACHED_CHANGED_FILE_LIST]
+    if (globalVars[pipeline.runParameters.CACHED_CHANGED_FILE_LIST] != null) {
+        return globalVars[pipeline.runParameters.CACHED_CHANGED_FILE_LIST]
     }
     try {
         def changedFileList = getMRChangedFile(pipeline, globalVars, "getChangedFileList")
         def changedFileListStr = changedFileList.join(",\n")
         pipeline.echo("The changeset of this MR is: ${changedFileListStr}.")
-        globalVars[pipeline.CACHED_CHANGED_FILE_LIST] = changedFileList
-        return globalVars[pipeline.CACHED_CHANGED_FILE_LIST]
+        globalVars[pipeline.runParameters.CACHED_CHANGED_FILE_LIST] = changedFileList
+        return globalVars[pipeline.runParameters.CACHED_CHANGED_FILE_LIST]
     } catch (InterruptedException e) {
         throw e
     } catch (Exception e) {
         pipeline.echo("Get merge request changed file list failed. Error: ${e.toString()}")
-        globalVars[pipeline.CACHED_CHANGED_FILE_LIST] = []
-        return globalVars[pipeline.CACHED_CHANGED_FILE_LIST]
+        globalVars[pipeline.runParameters.CACHED_CHANGED_FILE_LIST] = []
+        return globalVars[pipeline.runParameters.CACHED_CHANGED_FILE_LIST]
     }
 }
 

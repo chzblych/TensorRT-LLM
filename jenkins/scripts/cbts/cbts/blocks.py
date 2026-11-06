@@ -33,6 +33,8 @@ from typing import Iterable, Optional
 
 import yaml
 
+from cbts.stage_catalog import load_stage_records, stage_config_path
+
 # Target wall-time per pytest-split shard (used to size a narrowed stage's splits).
 TARGET_SHARD_SECONDS = 2 * 60 * 60
 
@@ -398,7 +400,7 @@ def _range_in(val_str: str | None, gte, lte) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Stage config parsing from jenkins/L0_Test.groovy
+# Stage config loading from the canonical catalog or legacy Groovy sources
 # ---------------------------------------------------------------------------
 
 # Matches a single entry like:
@@ -498,23 +500,16 @@ def derive_mako_from_stage(stage_name: str) -> dict[str, str]:
     return mako
 
 
-def stage_config_path(groovy_path: Path) -> Path:
-    """Resolve the L0 test entry to its stage module; keep standalone sources usable."""
-    module = groovy_path.parent / "pipelines/test/Stages.groovy"
-    if groovy_path.name == "L0_Test.groovy" and module.is_file():
-        return module
-    return groovy_path
-
-
 def parse_stages_from_groovy(
     groovy_path: Path, include_post_merge: bool = False
 ) -> dict[str, Stage]:
-    """Parse the L0 test stage module and return {stage_name -> Stage}.
+    """Load L0 test stages and return {stage_name -> Stage}.
 
-    `L0_Test.groovy` inputs resolve to `pipelines/test/Stages.groovy` when
-    available. Monolithic and explicitly supplied standalone files still work.
+    Known Pipeline inputs resolve to `pipelines/test/stages.json` when available.
+    A stage family's architecture and shard count are explicit in that catalog.
+    Monolithic and explicitly supplied standalone Groovy files still work.
 
-    - cpu_arch is determined by which map literal (x86TestConfigs,
+    - In legacy sources, cpu_arch is determined by which map literal (x86TestConfigs,
       SBSATestConfigs, ...) the entry lives in; falls back to stage-name
       heuristic if the map var is unfamiliar.
     - mako is derived via `derive_mako_from_stage` (pure stage-name logic).
@@ -522,6 +517,21 @@ def parse_stages_from_groovy(
     """
     stages: dict[str, Stage] = {}
     current_arch: Optional[str] = None
+
+    records = load_stage_records(groovy_path)
+    if records is not None:
+        for record in records:
+            name = record["name"]
+            if include_post_merge or "Post-Merge" not in name:
+                stages[name] = Stage(
+                    name=name,
+                    yaml_stem=record["testList"],
+                    cpu_arch=record["arch"],
+                    split_id=record["splitId"],
+                    total_splits=record["splits"],
+                    mako=derive_mako_from_stage(name),
+                )
+        return stages
 
     for line in stage_config_path(groovy_path).read_text().splitlines():
         # Skip commented-out lines: disabled stage configs must not be parsed.

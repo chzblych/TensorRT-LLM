@@ -23,13 +23,13 @@ import org.jenkinsci.plugins.workflow.steps.FlowInterruptedException
 
 def initialize(pipeline)
 {
-    this.pipeline = pipeline
+    this.@pipeline = pipeline
     return this
 }
 
 // Upload sqlite-only early coverage after single-GPU finishes, before multi-GPU starts; non-fatal.
 def uploadArchCoverage(String arch, pipeline, testFilter) {
-    if (!testFilter[(pipeline.CBTS_COVERAGE)]) {
+    if (!testFilter[(pipeline.runParameters.CBTS_COVERAGE)]) {
         return
     }
     def sbsaPrefixPattern = "^results-(GH200|GB10|GB200|GB300|CPU-Generic-arm)-"

@@ -26,13 +26,13 @@ import org.jenkinsci.plugins.pipeline.modeldefinition.Utils as jUtils
 
 def initialize(pipeline)
 {
-    this.pipeline = pipeline
+    this.@pipeline = pipeline
     return this
 }
 
 def launchReleaseCheck(pipeline, globalVars)
 {
-    pipeline.stages = {
+    def releaseSteps = {
         pipeline.trtllm_utils.llmExecStepWithRetry(pipeline, script: "apt-get update && apt-get install -y python3-pip")
         pipeline.sh "pip3 config set global.break-system-packages true"
         pipeline.sh "git config --global --add safe.directory \"*\""
@@ -46,7 +46,7 @@ def launchReleaseCheck(pipeline, globalVars)
             pipeline.trtllm_utils.checkoutSource(pipeline.SCAN_REPO, pipeline.SCAN_COMMIT, pipeline.SCAN_ROOT, false, true)
             pipeline.trtllm_utils.llmExecStepWithRetry(pipeline, script: "cd ${pipeline.SCAN_ROOT} && pip3 install -e .")
             try {
-                pipeline.ignoreList = [
+                def ignoreList = [
                     "*/.git/*",
                     "*/3rdparty/*",
                     "*/cpp/tensorrt_llm/deep_ep/nvshmem_src_*.txz",
@@ -59,7 +59,7 @@ def launchReleaseCheck(pipeline, globalVars)
                     cd ${pipeline.LLM_ROOT}
                     # Batch files below ARG_MAX; pipefail propagates scan failures to prevent false greens.
                     find . -type f \\
-                        ${pipeline.ignoreList.collect { "-not -path \"${it}\"" }.join(' ')} \\
+                        ${ignoreList.collect { "-not -path \"${it}\"" }.join(' ')} \\
                         -not -path "./scan.log" \\
                         -exec confidentiality-scan {} + 2>&1 | tee scan.log
                 """.stripIndent()
@@ -118,16 +118,16 @@ def launchReleaseCheck(pipeline, globalVars)
     }
 
     def image = "artifactory.pdx.nvidia.com/docker-remote/golang:1.23"
-    pipeline.stageName = "Release-Check"
+    def stageName = "Release-Check"
     pipeline.trtllm_utils.launchKubernetesPod(pipeline, pipeline.createKubernetesPodConfig(image, "package"), "trt-llm", {
-        pipeline.stage("[${pipeline.stageName}] Run") {
+        pipeline.stage("[${stageName}] Run") {
             if (pipeline.RELEASE_CHECK_CHOICE == pipeline.STAGE_CHOICE_SKIP) {
                 pipeline.echo "Release Check job is skipped due to Jenkins configuration"
                 return
             }
             try {
-                pipeline.mrEnvironment.echoNodeAndGpuInfo(pipeline, pipeline.stageName)
-                pipeline.stages()
+                pipeline.mrEnvironment.echoNodeAndGpuInfo(pipeline, stageName)
+                releaseSteps()
             } catch (InterruptedException e) {
                 throw e
             } catch (Exception e) {
@@ -148,8 +148,8 @@ def launchReleaseCheck(pipeline, globalVars)
 // Inside a parallel branch, pass a nested stage name: Blue Ocean shows a skip marked on the branch's own stage as NOT_BUILT.
 def skipStage(String stageName, String message)
 {
-    pipeline.stage(stageName) {
-        pipeline.echo message
+    this.@pipeline.stage(stageName) {
+        this.@pipeline.echo message
         jUtils.markStageSkippedForConditional(stageName)
     }
 }
@@ -190,13 +190,13 @@ def launchTestListCheck(pipeline, globalVars)
 // build.
 def resolveBoltProfileRef(String branch, String triple = "aarch64-linux-gnu")
 {
-    if (!pipeline.isBoltReleasePipeline()) {
+    if (!this.@pipeline.isBoltReleasePipeline()) {
         return ""
     }
     def ref = ""
     try {
-        ref = pipeline.sh(returnStdout: true, script: """
-            bash ${pipeline.LLM_ROOT}/scripts/bolt/internal/artifactory.sh \
+        ref = this.@pipeline.sh(returnStdout: true, script: """
+            bash ${this.@pipeline.LLM_ROOT}/scripts/bolt/internal/artifactory.sh \
                  resolve-latest ${branch} ${triple} 2>/dev/null || true
         """).trim()
     } catch (InterruptedException e) {
@@ -206,35 +206,35 @@ def resolveBoltProfileRef(String branch, String triple = "aarch64-linux-gnu")
         // carries on and launches every build job.
         throw e
     } catch (Exception e) {
-        pipeline.echo "BOLT profile pin: resolve failed (${e.message}); running unpinned."
+        this.@pipeline.echo "BOLT profile pin: resolve failed (${e.message}); running unpinned."
         return ""
     }
     if (!ref) {
-        pipeline.echo "BOLT profile pin: nothing promoted for ${branch}/${triple}; running unpinned."
+        this.@pipeline.echo "BOLT profile pin: nothing promoted for ${branch}/${triple}; running unpinned."
         return ""
     }
-    pipeline.echo "BOLT profile pin: ${branch}/${triple} -> ${ref}. Every consumer in this run uses this bundle."
+    this.@pipeline.echo "BOLT profile pin: ${branch}/${triple} -> ${ref}. Every consumer in this run uses this bundle."
     return ref
 }
 
 def getCommonParameters()
 {
     return [
-        'gitlabSourceRepoHttpUrl': pipeline.LLM_REPO,
-        'gitlabCommit': pipeline.env.gitlabCommit,
-        'artifactPath': pipeline.UPLOAD_PATH,
-        'uploadPath': pipeline.UPLOAD_PATH,
+        'gitlabSourceRepoHttpUrl': this.@pipeline.LLM_REPO,
+        'gitlabCommit': this.@pipeline.env.gitlabCommit,
+        'artifactPath': this.@pipeline.UPLOAD_PATH,
+        'uploadPath': this.@pipeline.UPLOAD_PATH,
     ]
 }
 
 def getPLCRepoUrlKey()
 {
     def repoUrlKey = "tensorrt_llm_github_sync"
-    pipeline.withCredentials([pipeline.string(credentialsId: 'default-llm-repo', variable: 'DEFAULT_LLM_REPO')]) {
-        if (pipeline.LLM_REPO == pipeline.DEFAULT_LLM_REPO) {
+    this.@pipeline.withCredentials([this.@pipeline.string(credentialsId: 'default-llm-repo', variable: 'DEFAULT_LLM_REPO')]) {
+        if (this.@pipeline.LLM_REPO == this.@pipeline.DEFAULT_LLM_REPO) {
             repoUrlKey = "tensorrt_llm_internal"
-        } else if (pipeline.LLM_REPO == "https://github.com/NVIDIA/TensorRT-LLM.git" ||
-                   pipeline.LLM_REPO == "https://github.com/NVIDIA/TensorRT-LLM") {
+        } else if (this.@pipeline.LLM_REPO == "https://github.com/NVIDIA/TensorRT-LLM.git" ||
+                   this.@pipeline.LLM_REPO == "https://github.com/NVIDIA/TensorRT-LLM") {
             repoUrlKey = "tensorrt_llm_github"
         }
     }
@@ -242,15 +242,15 @@ def getPLCRepoUrlKey()
 }
 
 def findCachedPLCSourceScanResult(commit) {
-    def plcJobUrl = "${pipeline.trtllm_utils.resolveCurrentJenkinsBaseUrl(pipeline)}/job/LLM/job/helpers/job/PLCScanningSetup"
-    def exitCode = pipeline.sh(
-        script: "python3 ${pipeline.LLM_ROOT}/jenkins/scripts/find_plc_build.py --commit ${commit} --jenkins-base ${plcJobUrl} > find_plc_build.json",
+    def plcJobUrl = "${this.@pipeline.trtllm_utils.resolveCurrentJenkinsBaseUrl(this.@pipeline)}/job/LLM/job/helpers/job/PLCScanningSetup"
+    def exitCode = this.@pipeline.sh(
+        script: "python3 ${this.@pipeline.LLM_ROOT}/jenkins/scripts/find_plc_build.py --commit ${commit} --jenkins-base ${plcJobUrl} > find_plc_build.json",
         returnStatus: true
     )
     if (exitCode != 0) {
         return null
     }
-    def buildInfo = new JsonSlurper().parseText(pipeline.readFile("find_plc_build.json"))
+    def buildInfo = new JsonSlurper().parseText(this.@pipeline.readFile("find_plc_build.json"))
     return [result: buildInfo.result, url: buildInfo.url]
 }
 
@@ -259,8 +259,8 @@ def launchJob(pipeline, jobName, reuseBuild, enableFailFast, globalVars, additio
     // Build a local copy to avoid racey growth from shared parallel mutations.
     // In particular, CACHED_CHANGED_FILE_LIST can become very large and may
     // trigger "Argument list too long" when passed to downstream jobs.
-    def globalVarsToPass = globalVars.findAll { key, value -> key != pipeline.CACHED_CHANGED_FILE_LIST }
-    globalVarsToPass[pipeline.LLM_ARTIFACTS_PRIMARY_KEY] = pipeline.artifactPaths.llmArtifactsPrimary()
+    def globalVarsToPass = globalVars.findAll { key, value -> key != pipeline.runParameters.CACHED_CHANGED_FILE_LIST }
+    globalVarsToPass[pipeline.runParameters.LLM_ARTIFACTS_PRIMARY_KEY] = pipeline.artifactPaths.llmArtifactsPrimary()
     String globalVarsJson = pipeline.writeJSON returnText: true, json: globalVarsToPass
     parameters += [
         'enableFailFast': enableFailFast,
@@ -282,12 +282,13 @@ def launchJob(pipeline, jobName, reuseBuild, enableFailFast, globalVars, additio
         jobName = jobName.substring(1)
     } else {
         def pos = pipeline.env.JOB_NAME.lastIndexOf("/")
+        def jobDir
         if (pos != -1) {
-            pipeline.jobDir = pipeline.env.JOB_NAME.substring(0, pos + 1)
+            jobDir = pipeline.env.JOB_NAME.substring(0, pos + 1)
         } else {
-            pipeline.jobDir = ""
+            jobDir = ""
         }
-        jobName = "${pipeline.jobDir}${jobName}"
+        jobName = "${jobDir}${jobName}"
     }
 
     pipeline.echo "Trigger ${jobName} job, params: ${parameters}"
