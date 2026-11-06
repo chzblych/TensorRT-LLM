@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from test_common.jenkins_source import read_pipeline_source
 
 pytestmark = pytest.mark.cpu_only
 
@@ -1214,7 +1215,7 @@ def test_helper_names_its_exit_codes() -> None:
 @pytest.mark.parametrize("reader", EXIT_CODE_READERS, ids=lambda reader: Path(reader.path).name)
 def test_readers_use_the_helpers_exit_code_names(reader: ExitCodeReader) -> None:
     helper_codes = _helper_exit_codes()
-    text = (REPO_ROOT / reader.path).read_text()
+    text = read_pipeline_source(REPO_ROOT / reader.path)
 
     defined = _defined_exit_codes(text, reader.definition)
     assert defined, f"{reader.path} defines none of {sorted(helper_codes)}"

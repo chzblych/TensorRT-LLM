@@ -133,7 +133,7 @@ Due to CI hardware resource limitation, and some cases only run on specific GPUs
 
 In directory `integration/test_lists/test-db`, each yml file corresponds to a GPU type.
 
-In file `jenkins/L0_Test.groovy`, the variables `x86TestConfigs`, `SBSATestConfigs`, `x86SlurmTestConfigs` and `SBSASlurmTestConfigs` map yml files to CI stages according to platforms and launch methods.
+In `jenkins/pipelines/test/stages.json`, stage families map test-db files to CI stages by architecture and runner. Declare each family once with `testList` and `splits`; `{shard}` expands to each stage index. See `jenkins/pipelines/README.md` for the schema and `scripts/test_to_stage_mapping.py` for lookup.
 
 Currently the yml files are manually maintained, which requires developer to update them when new test cases are added.
 

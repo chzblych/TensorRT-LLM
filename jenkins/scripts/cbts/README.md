@@ -32,9 +32,9 @@ CBTS narrows test cases only; Build always runs.
 
 | Layer | Where | Action |
 |---|---|---|
-| **2. Stage** | `L0_Test.groovy::launchTestJobs` | Intersect the baseline-eligible stage set with affected stages, then add PackageSanityCheck (kept iff `sanity_required`) and PerfSanity (kept iff `perfsanity_required`). Empty affectedSet + nothing force-kept → no-op. |
-| **2.5. Split-resize** | `L0_Test.groovy::launchTestJobs` (`cbtsResizeSplits`) | Keep only shards `1..k` per narrowed stage, where `k` (duration-sized to ~2h/shard) is `affected_stage_split_counts`. |
-| **3. Within-stage tests** | `L0_Test.groovy::renderTestDB` | Point trt-test-db at the narrowed `cbts_test_db/`. Each affected block's `tests:` is restricted to entries in the filter prefix subtree; unaffected blocks are dropped. |
+| **2. Stage** | `test/Selection.groovy::filterCbtsStageJobs` | Intersect the baseline-eligible stage set with affected stages, then add PackageSanityCheck (kept iff `sanity_required`) and PerfSanity (kept iff `perfsanity_required`). Empty affectedSet + nothing force-kept → no-op. |
+| **2.5. Split-resize** | `test/Selection.groovy::cbtsResizeSplits` | Keep only shards `1..k` per narrowed stage, where `k` (duration-sized to ~2h/shard) is `affected_stage_split_counts`. |
+| **3. Within-stage tests** | `test/Db.groovy::renderTestDB` | Point trt-test-db at the narrowed `cbts_test_db/`. Each affected block's `tests:` is restricted to entries in the filter prefix subtree; unaffected blocks are dropped. |
 
 CBTS only subtracts; anything it can't narrow → fallback to the existing
 filter chain.
@@ -297,9 +297,9 @@ a successful shadow candidate.
 
 `blocks.compute_stage_split_counts` sizes each narrowed stage to
 `k = clamp(ceil(est_seconds / 2h), 1, stage.total_splits)` (cap parsed from
-`L0_Test.groovy`). `est_seconds` sums the `.test_durations` cache over the
+`jenkins/pipelines/test/stages.json`). `est_seconds` sums the `.test_durations` cache over the
 stage's kept entries (exact node-id, else subtree-sum, else average — over-counts
-toward the cap, never under-sizes). `launchTestJobs::cbtsResizeSplits` keeps only
+toward the cap, never under-sizes). `test/Selection.groovy::cbtsResizeSplits` keeps only
 shards `1..k`; pytest-split then balances within them via `least_duration`.
 
 `cbtsResizeSplits` also renames each narrowed stage with a `-cbts` suffix so its
@@ -392,6 +392,6 @@ Every fallback emits an `echo` log line.
 ## Keep-in-sync notes
 
 `blocks.py::derive_mako_from_stage` mirrors Groovy
-`getMakoArgsFromStageName` (~`L0_Test.groovy:2079`) and
-`parseTaskConfigFromStageName` (~`:2066`). Update both when adding new
+`jenkins/pipelines/test/Db.groovy::getMakoArgsFromStageName` and
+`parseTaskConfigFromStageName`. Update both when adding new
 backends / orchestrators / stage-name conventions.

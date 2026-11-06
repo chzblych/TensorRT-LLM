@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from test_common.jenkins_source import groovy_function_body, read_pipeline_source
 
 pytestmark = pytest.mark.cpu_only
 
@@ -491,7 +492,7 @@ def test_slurm_install_leaves_the_netrc_on_an_unexpected_node_count(
 
 
 def _l0_test_code_lines() -> list[str]:
-    """Return the code lines of jenkins/L0_Test.groovy, as _groovy_code_lines does."""
+    """Return the code lines of the L0 test entry and its functional modules."""
     return _groovy_code_lines(L0_TEST)
 
 
@@ -509,7 +510,7 @@ def _groovy_code_lines(path: Path) -> list[str]:
     code = []
     in_block_comment = False
     continued = ""
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in read_pipeline_source(path).splitlines():
         stripped = line.strip()
         if in_block_comment:
             in_block_comment = "*/" not in stripped
@@ -529,18 +530,7 @@ def _groovy_code_lines(path: Path) -> list[str]:
 
 def _groovy_function_body(lines: list[str], name: str) -> str:
     """Return the top-level Groovy function ``name``, up to the next top-level definition."""
-    starts = [index for index, line in enumerate(lines) if re.match(rf"(def|void) {name}\(", line)]
-    assert len(starts) == 1, f"expected one top-level definition of {name}"
-    start = starts[0]
-    end = next(
-        (
-            index
-            for index in range(start + 1, len(lines))
-            if lines[index].startswith(("def ", "void "))
-        ),
-        len(lines),
-    )
-    return "\n".join(lines[start:end])
+    return groovy_function_body("\n".join(lines), name)
 
 
 def _enclosing_blocks(lines: list[str], index: int) -> list[str]:
@@ -565,7 +555,7 @@ def test_l0_reads_packaged_builds_through_fetch_helper() -> None:
     assert "readHelperPath(pipeline)" in body
     helper_body = _groovy_function_body(lines, "readHelperPath")
     assert "fetch_build_artifact.sh" in helper_body
-    assert "unstash(FETCH_BUILD_ARTIFACT_STASH)" in helper_body
+    assert "pipeline.unstash(pipeline.FETCH_BUILD_ARTIFACT_STASH)" in helper_body
 
 
 def _fetch_script(command: str, status_path: Path) -> str:
@@ -590,7 +580,9 @@ def _fetch_script(command: str, status_path: Path) -> str:
             )
         ),
     }
-    script = re.sub(r"(?<!\\)\$\{(\w+)\}", lambda match: values[match[1]], "".join(literals))
+    script = re.sub(
+        r"(?<!\\)\$\{(?:pipeline\.)?(\w+)\}", lambda match: values[match[1]], "".join(literals)
+    )
     return script.replace('\\"', '"').replace("\\$", "$")
 
 
@@ -661,8 +653,8 @@ def test_fat_sqsh_builder_reads_the_package_through_fetch_helper() -> None:
     key = """printf '%s' "${FAT_LLM_TAR_ARTIFACT_PATH}|${FAT_LLM_DOCKER_IMAGE}|"""
     assert key in body
     assert key in prepare
-    l0_key = "printf '%s' '${llmTarArtifactPath}|${LLM_DOCKER_IMAGE}|${scriptHash}'"
-    assert l0_key in L0_TEST.read_text(encoding="utf-8")
+    l0_key = "printf '%s' '${llmTarArtifactPath}|${this.@pipeline.LLM_DOCKER_IMAGE}|${scriptHash}'"
+    assert l0_key in read_pipeline_source(L0_TEST)
 
 
 def test_l0_slurm_job_gets_the_read_helper_and_its_netrc() -> None:
@@ -676,7 +668,7 @@ def test_l0_slurm_job_gets_the_read_helper_and_its_netrc() -> None:
         'def scriptFetchHelperPathNode = "${jobWorkspace}/${jobUID}-fetch_build_artifact.sh"'
         in body
     )
-    assert "def scriptFetchHelperLocalPath = readHelperPath(pipeline)" in body
+    assert "def scriptFetchHelperLocalPath = pipeline.testBuild.readHelperPath(pipeline)" in body
     assert re.search(
         r"Utils\.copyFileToRemoteHost\(\s*pipeline,\s*remote,\s*scriptFetchHelperLocalPath,"
         r"\s*scriptFetchHelperPathNode,\s*true\s*\)",
@@ -692,8 +684,8 @@ def test_l0_slurm_job_gets_the_read_helper_and_its_netrc() -> None:
     ]
     assert len(netrc_writes) == 1
     openers = _enclosing_blocks(body_lines, netrc_writes[0])
-    assert 'stage("Initialize Test") {' in openers
-    within_stage = openers[: openers.index('stage("Initialize Test") {')]
+    assert 'pipeline.stage("Initialize Test") {' in openers
+    within_stage = openers[: openers.index('pipeline.stage("Initialize Test") {')]
     assert [opener for opener in within_stage if opener.startswith("if")] == []
     assert re.search(
         r"Utils\.copyFileToRemoteHost\(\s*pipeline,\s*remote,\s*artifactoryNetrcPathLocal,"
@@ -712,7 +704,7 @@ def test_l0_slurm_job_gets_the_read_helper_and_its_netrc() -> None:
     assert len(registrations) == 1
     assert registrations[0] < netrc_writes[0]
     openers = _enclosing_blocks(body_lines, registrations[0])
-    within_stage = openers[: openers.index('stage("Initialize Test") {')]
+    within_stage = openers[: openers.index('pipeline.stage("Initialize Test") {')]
     assert [opener for opener in within_stage if opener.startswith("if")] == []
     register = _groovy_function_body(lines, "registerSlurmResource")
     assert 'id: "${stageName}/slurm/${fields.jobUID ?: fields.nodeName}"' in register
@@ -720,10 +712,14 @@ def test_l0_slurm_job_gets_the_read_helper_and_its_netrc() -> None:
     # The job script exports what the helper and slurm_install.sh read, with no condition.
     # llmTarfile is the URL that --exists resolved on the agent, for the older slurm_install.sh
     # inside a package built before the helper existed.
-    exports = [line.strip() for line in body_lines if re.search(r"\bexport \w+=", line)]
+    launcher = _groovy_function_body(lines, "generateSbatchLaunchPrefix")
+    assert "pipeline.sbatchScripts.generateSbatchLaunchPrefix(partition, taskArgs, [" in body
+    assert "artifactsPrimary: pipeline.artifactPaths.llmArtifactsPrimary()," in body
+    assert "LLM_ARTIFACTS_CREDENTIALS_ID: pipeline.LLM_ARTIFACTS_CREDENTIALS_ID," in body
+    exports = [line.strip() for line in launcher.splitlines() if re.search(r"\bexport \w+=", line)]
     for name, value in (
         ("llmTarArtifactPath", "$llmTarArtifactPath"),
-        ("LLM_ARTIFACTS_PRIMARY", "${llmArtifactsPrimary()}"),
+        ("LLM_ARTIFACTS_PRIMARY", "${artifactsPrimary}"),
         ("ARTIFACTORY_NETRC", "$artifactoryNetrcPathNode"),
         ("ARTIFACTORY_CREDENTIAL_ID", "$LLM_ARTIFACTS_CREDENTIALS_ID"),
         ("llmTarfile", "$llmTarfile"),
@@ -751,9 +747,9 @@ def test_l0_reads_build_artifacts_and_pulls_images_with_separate_credential_sett
 
     # The helper's netrc and the credential name that the helper prints come from one setting.
     netrc_writer = _groovy_function_body(lines, "writeArtifactoryNetrc")
-    assert "credentialsId: LLM_ARTIFACTS_CREDENTIALS_ID," in netrc_writer
+    assert "credentialsId: pipeline.LLM_ARTIFACTS_CREDENTIALS_ID," in netrc_writer
     fetch = _groovy_function_body(lines, "fetchBuildArtifact")
-    assert '"ARTIFACTORY_CREDENTIAL_ID=${LLM_ARTIFACTS_CREDENTIALS_ID}",' in fetch
+    assert '"ARTIFACTORY_CREDENTIAL_ID=${pipeline.LLM_ARTIFACTS_CREDENTIALS_ID}",' in fetch
     # fetchBuildArtifact gives the helper the netrc that writeArtifactoryNetrc writes, as the Slurm
     # launcher does.
     assert "writeArtifactoryNetrc(pipeline, netrcPath)" in fetch
@@ -765,12 +761,14 @@ def test_l0_reads_build_artifacts_and_pulls_images_with_separate_credential_sett
         index
         for index, line in enumerate(lines)
         if "machine ${ARTIFACTORY_DOCKER_HOST} login" in line
-        or "docker login ${ARTIFACTORY_DOCKER_HOST}" in line
+        or "docker login ${pipeline.ARTIFACTORY_DOCKER_HOST}" in line
     ]
     assert logins
     for index in logins:
         credential = next(line for line in reversed(lines[:index]) if "credentialsId:" in line)
-        assert credential.strip() == "credentialsId: ARTIFACTORY_CREDENTIALS_ID,", lines[index]
+        assert credential.strip() == "credentialsId: pipeline.ARTIFACTORY_CREDENTIALS_ID,", lines[
+            index
+        ]
 
     # That setting holds the image-pull identity, not the credential that publishes build artifacts.
     publishing = _artifact_location_field(_groovy_code(BUILD_GROOVY), "aws", "credential")
@@ -786,9 +784,10 @@ _USERNAME_PASSWORD_BINDING = re.compile(
 )
 
 
-def _assignments(code: str, name: str) -> list[str]:
+def _assignments(code: str, name: str, global_only: bool = False) -> list[str]:
     """Return the values that a pipeline assigns to a variable, with or without def."""
-    return re.findall(rf"^[ \t]*(?:def[ \t]+)?{name}[ \t]*=[ \t]*(.+?)[ \t]*$", code, re.M)
+    declaration = "" if global_only else r"(?:def[ \t]+)?"
+    return re.findall(rf"^[ \t]*{declaration}{name}[ \t]*=[ \t]*(.+?)[ \t]*$", code, re.M)
 
 
 def _artifact_location_field(code: str, location: str, field: str) -> str:
@@ -809,6 +808,8 @@ def _groovy_string(code: str, expression: str) -> str:
     pipeline assigns once.
     """
     expression = expression.strip()
+    global_only = expression.startswith("pipeline.")
+    expression = expression.removeprefix("pipeline.")
     literal = re.fullmatch(r"""(["'])(?P<value>[^"'$]*)\1""", expression)
     if literal:
         return literal["value"]
@@ -816,7 +817,12 @@ def _groovy_string(code: str, expression: str) -> str:
     if field:
         return _artifact_location_field(code, field["location"], field["field"])
     assert re.fullmatch(r"\w+", expression), f"cannot evaluate {expression!r}"
-    values = _assignments(code, expression)
+    values = _assignments(code, expression, global_only=global_only)
+    forwarded = f"values.{expression}"
+    if forwarded in values:
+        # SbatchScripts receives its credential through the launcher's values map.
+        assert f"{expression}: pipeline.{expression}," in code
+        values = [value for value in values if value != forwarded]
     assert len(values) == 1, f"expected one assignment of {expression}, found {values}"
     return _groovy_string(code, values[0])
 
