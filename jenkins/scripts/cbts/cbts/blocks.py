@@ -498,10 +498,21 @@ def derive_mako_from_stage(stage_name: str) -> dict[str, str]:
     return mako
 
 
+def stage_config_path(groovy_path: Path) -> Path:
+    """Resolve the L0 test entry to its stage module; keep standalone sources usable."""
+    module = groovy_path.parent / "pipelines/test/Stages.groovy"
+    if groovy_path.name == "L0_Test.groovy" and module.is_file():
+        return module
+    return groovy_path
+
+
 def parse_stages_from_groovy(
     groovy_path: Path, include_post_merge: bool = False
 ) -> dict[str, Stage]:
-    """Parse `jenkins/L0_Test.groovy` and return {stage_name -> Stage}.
+    """Parse the L0 test stage module and return {stage_name -> Stage}.
+
+    `L0_Test.groovy` inputs resolve to `pipelines/test/Stages.groovy` when
+    available. Monolithic and explicitly supplied standalone files still work.
 
     - cpu_arch is determined by which map literal (x86TestConfigs,
       SBSATestConfigs, ...) the entry lives in; falls back to stage-name
@@ -512,7 +523,7 @@ def parse_stages_from_groovy(
     stages: dict[str, Stage] = {}
     current_arch: Optional[str] = None
 
-    for line in groovy_path.read_text().splitlines():
+    for line in stage_config_path(groovy_path).read_text().splitlines():
         # Skip commented-out lines: disabled stage configs must not be parsed.
         if line.lstrip().startswith("//"):
             continue

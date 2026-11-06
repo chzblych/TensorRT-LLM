@@ -1,6 +1,20 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """Lookup Jenkins stage names for integration tests and vice versa.
 
-This helper parses ``jenkins/L0_Test.groovy`` and the YAML files under
+This helper follows ``jenkins/L0_Test.groovy`` to its stage configuration module
+and parses the YAML files under
 ``tests/integration/test_lists/test-db`` to provide a bidirectional mapping
 between test names and Jenkins stage names. When ``--tests`` or ``--test-list``
 options are used, each value is treated as a substring pattern. Any test whose
@@ -16,7 +30,7 @@ Example usage::
        A100X-PyTorch-Post-Merge-1
 
 Stage names passed to ``--stages`` must exactly match a key of the stage map in
-``jenkins/L0_Test.groovy``. Unrecognized names, and known names that map to no
+``jenkins/pipelines/test/Stages.groovy``. Unrecognized names, and known names that map to no
 tests, are reported on stderr.
 
 Tests can also be provided via ``--test-list`` pointing to either a plain text
@@ -31,6 +45,7 @@ import re
 import sys
 from collections import defaultdict
 from glob import glob
+from pathlib import Path
 from typing import List
 
 import yaml
@@ -91,6 +106,10 @@ class StageQuery:
     def _parse_stage_mapping(path):
         stage_to_yaml = {}
         yaml_to_stages = defaultdict(list)
+        path = Path(path)
+        stage_module = path.parent / 'pipelines' / 'test' / 'Stages.groovy'
+        if path.name == 'L0_Test.groovy' and stage_module.is_file():
+            path = stage_module
         with open(path, 'r') as f:
             for line in f:
                 if line.lstrip().startswith('//'):

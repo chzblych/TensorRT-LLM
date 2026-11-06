@@ -203,6 +203,34 @@ def test_known_stage_without_tests_is_reported(tmp_path):
     assert 'no tests mapped to: Empty-PyTorch-1' in proc.stderr.decode()
 
 
+@pytest.mark.parametrize('source', ['entry', 'standalone', 'monolithic'])
+def test_stage_mapping_resolves_modular_and_standalone_sources(
+        tmp_path, source):
+    """The old entry path finds its module without redirecting explicit files."""
+    entry = tmp_path / 'jenkins' / 'L0_Test.groovy'
+    entry.parent.mkdir()
+    module = entry.parent / 'pipelines' / 'test' / 'Stages.groovy'
+    module.parent.mkdir(parents=True)
+    stage_line = '"A10-PyTorch-1": ["a10", "l0_a10", 1, 2],\n'
+    module.write_text(stage_line)
+    entry.write_text(
+        'pipeline { /* stage configuration is loaded separately */ }')
+    if source == 'standalone':
+        entry = entry.with_name('custom.groovy')
+        entry.write_text(stage_line.replace('A10-', 'Custom-'))
+        expected_stage = 'Custom-PyTorch-1'
+    else:
+        expected_stage = 'A10-PyTorch-1'
+        if source == 'monolithic':
+            module.unlink()
+            entry.write_text(stage_line)
+
+    forward, reverse = StageQuery._parse_stage_mapping(str(entry))
+
+    assert forward == {expected_stage: 'l0_a10.yml'}
+    assert dict(reverse) == {'l0_a10.yml': [expected_stage]}
+
+
 @pytest.mark.parametrize("direction",
                          ["test_to_stage", "stage_to_test", "roundtrip"])
 def test_bidirectional_mapping_consistency(stage_query, sample_test_cases,

@@ -16,24 +16,22 @@
 import unittest
 from pathlib import Path
 
+from test_common.jenkins_source import groovy_function_body as _function_body
+from test_common.jenkins_source import read_pipeline_source
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
-L0_TEST = (REPO_ROOT / "jenkins" / "L0_Test.groovy").read_text()
-L0_PARENT = (REPO_ROOT / "jenkins" / "L0_MergeRequest.groovy").read_text()
+L0_TEST = read_pipeline_source(REPO_ROOT / "jenkins" / "L0_Test.groovy")
+L0_PARENT = read_pipeline_source(REPO_ROOT / "jenkins" / "L0_MergeRequest.groovy")
 SLURM_RUN = (REPO_ROOT / "jenkins" / "scripts" / "slurm_run.sh").read_text()
 DRY_RUN_DB = (
     REPO_ROOT / "tests" / "integration" / "test_lists" / "test-db" / "infra_dry_run.yml"
 ).read_text()
 
 
-def _function_body(source: str, name: str, next_name: str) -> str:
-    start = source.index(f"def {name}")
-    return source[start : source.index(f"def {next_name}", start + len(name))]
-
-
 class InfraDryRunPipelineTest(unittest.TestCase):
     def test_dry_run_allows_only_the_synthetic_pytest_target(self) -> None:
         expected = "test_infra_dry_run_benchmark.py::test_infra_dry_run_benchmark"
-        targets = _function_body(L0_TEST, "getInfraDryRunPytestTargets", "processShardTestList")
+        targets = _function_body(L0_TEST, "getInfraDryRunPytestTargets")
 
         self.assertEqual(DRY_RUN_DB.count("::test_"), 1)
         self.assertIn(expected, DRY_RUN_DB)
@@ -42,23 +40,23 @@ class InfraDryRunPipelineTest(unittest.TestCase):
         self.assertIn("return targets", targets)
 
     def test_slurm_dry_run_preserves_agent_and_sbatch_dispatch(self) -> None:
-        dispatch = _function_body(L0_TEST, "runLLMTestlistOnSlurm", "INFRA_DRY_RUN")
-        agent = _function_body(L0_TEST, "runLLMTestlistWithAgent", "executeLLMTestOnSlurm")
-        sbatch = _function_body(L0_TEST, "runLLMTestlistWithSbatch", "runLLMTestlistOnSlurm")
+        dispatch = _function_body(L0_TEST, "runLLMTestlistOnSlurm")
+        agent = _function_body(L0_TEST, "runLLMTestlistWithAgent")
+        sbatch = _function_body(L0_TEST, "runLLMTestlistWithSbatch")
 
         self.assertIn("if (nodeCount > 1 || runWithSbatch)", dispatch)
         self.assertNotIn("isInfraDryRun() || nodeCount", dispatch)
         self.assertIn("runInDockerOnNodeMultiStage", agent)
         self.assertIn("runInEnrootOnNode", agent)
-        self.assertIn("testList = INFRA_DRY_RUN_TEST_CONTEXT", sbatch)
-        self.assertIn("pytestCommandParts += getInfraDryRunPytestTargets", sbatch)
+        self.assertIn("testList = pipeline.INFRA_DRY_RUN_TEST_CONTEXT", sbatch)
+        self.assertIn("pytestCommandParts += pipeline.testDb.getInfraDryRunPytestTargets", sbatch)
         self.assertIn(
             'if [[ "${infraDryRun:-false}" == "true" || "$stageName" != *Disagg* ]]',
             SLURM_RUN,
         )
 
     def test_parent_dry_run_is_opt_in_non_fail_fast_and_collects_results(self) -> None:
-        helper = _function_body(L0_PARENT, "launchInfraDryRunTestJob", "launchStages")
+        helper = _function_body(L0_PARENT, "launchInfraDryRunTestJob")
 
         self.assertIn(
             "(INFRA_DRY_RUN): (params.InfraDryRun?.toString()?.toBoolean() ?: false)",
@@ -67,20 +65,16 @@ class InfraDryRunPipelineTest(unittest.TestCase):
         self.assertIn('"L0_Test-${arch}-Single-GPU"', helper)
         self.assertIn("'testPhase2StageName': ''", helper)
         self.assertIn(
-            "def effectiveFailFast = testFilter[INFRA_DRY_RUN] ? false : enableFailFast",
+            "def effectiveFailFast = testFilter[pipeline.INFRA_DRY_RUN] ? false : enableFailFast",
             L0_PARENT,
         )
         self.assertIn("parallelJobs.failFast = effectiveFailFast", L0_PARENT)
         self.assertIn("collectTestResults(this, testFilter, globalVars)", L0_PARENT)
 
     def test_dry_run_skips_merge_request_diff_lookups(self) -> None:
-        infra_dry_run_check = "(params.InfraDryRun?.toString()?.toBoolean() ?: false)"
-        changed_files = _function_body(
-            L0_PARENT, "getMergeRequestChangedFileList", "getMergeRequestOneFileChanges"
-        )
-        one_file_diff = _function_body(
-            L0_PARENT, "getMergeRequestOneFileChanges", "getAutoTriggerTagList"
-        )
+        infra_dry_run_check = "(pipeline.params.InfraDryRun?.toString()?.toBoolean() ?: false)"
+        changed_files = _function_body(L0_PARENT, "getMergeRequestChangedFileList")
+        one_file_diff = _function_body(L0_PARENT, "getMergeRequestOneFileChanges")
 
         for body, empty_result in ((changed_files, "return []"), (one_file_diff, 'return ""')):
             with self.subTest(empty_result=empty_result):
@@ -89,9 +83,7 @@ class InfraDryRunPipelineTest(unittest.TestCase):
                 self.assertLess(body.index(empty_result), body.index("getMRChangedFile("))
 
     def test_docs_skip_results_only_after_a_successful_build(self) -> None:
-        result_handler = _function_body(
-            L0_TEST, "cacheErrorAndUploadResult", "createKubernetesPodConfig"
-        )
+        result_handler = _function_body(L0_TEST, "cacheErrorAndUploadResult")
         self.assertIn(
             'cacheErrorAndUploadResult(pipeline, "${key}", values[1], {}, true, attemptTag, '
             "isFinalAttempt, retryContext)",
@@ -106,7 +98,7 @@ class InfraDryRunPipelineTest(unittest.TestCase):
         )
 
     def test_failure_evidence_match_is_logged_before_caching(self) -> None:
-        classifier = _function_body(L0_TEST, "classifyFailure", "preservePrimaryFailure")
+        classifier = _function_body(L0_TEST, "classifyFailure")
 
         self.assertIn("[FAILURE-EVIDENCE]", classifier)
         self.assertIn("evidence.matchedQueryId", classifier)
@@ -116,10 +108,8 @@ class InfraDryRunPipelineTest(unittest.TestCase):
         )
 
     def test_no_rerun_failure_preserves_initial_infra_classification(self) -> None:
-        isolated = _function_body(L0_TEST, "runIsolatedTests", "getInfraDryRunPytestTargets")
-        platform = _function_body(
-            L0_TEST, "runLLMTestlistOnPlatformImpl", "runLLMTestlistOnPlatform"
-        )
+        isolated = _function_body(L0_TEST, "runIsolatedTests")
+        platform = _function_body(L0_TEST, "runLLMTestlistOnPlatformImpl")
         classify_initial_failure = "classifyFailure(pipeline, e, scope, retryContext)"
 
         self.assertIn(classify_initial_failure, isolated)
@@ -135,12 +125,8 @@ class InfraDryRunPipelineTest(unittest.TestCase):
         )
 
     def test_post_actions_keep_interruptions_higher_priority_than_primary_failures(self) -> None:
-        result_handler = _function_body(
-            L0_TEST, "cacheErrorAndUploadResult", "createKubernetesPodConfig"
-        )
-        preserve_primary = _function_body(
-            L0_TEST, "preservePrimaryFailure", "rememberAvoidedKubernetesHostNodes"
-        )
+        result_handler = _function_body(L0_TEST, "cacheErrorAndUploadResult")
+        preserve_primary = _function_body(L0_TEST, "preservePrimaryFailure")
 
         self.assertIn("caughtError = e\n        stageIsInterrupted = true", result_handler)
         self.assertIn("catch (InterruptedException e) {\n        throw e", preserve_primary)
@@ -150,18 +136,18 @@ class InfraDryRunPipelineTest(unittest.TestCase):
         )
 
     def test_slurm_upload_skips_a_missing_result_directory(self) -> None:
-        upload_results = _function_body(L0_TEST, "uploadResults", "runIsolatedTests")
+        upload_results = _function_body(L0_TEST, "uploadResults")
 
-        self.assertIn("if (!fileExists(stageName))", upload_results)
+        self.assertIn("if (!pipeline.fileExists(stageName))", upload_results)
         self.assertLess(
-            upload_results.index("if (!fileExists(stageName))"),
-            upload_results.index('sh "tar -czvf results-${stageName}${postTag}.tar.gz'),
+            upload_results.index("if (!pipeline.fileExists(stageName))"),
+            upload_results.index('pipeline.sh "tar -czvf results-${stageName}${postTag}.tar.gz'),
         )
 
     def test_sbatch_final_failure_is_classified_without_scanning_the_whole_step_log(
         self,
     ) -> None:
-        sbatch = _function_body(L0_TEST, "runLLMTestlistWithSbatch", "cbtsResizeSplits")
+        sbatch = _function_body(L0_TEST, "runLLMTestlistWithSbatch")
 
         marker_query = '[[id: "slurm-sbatch-final-failure", anyOf: [sbatchFailureMarker]]]'
         self.assertIn(marker_query, sbatch)
@@ -171,9 +157,7 @@ class InfraDryRunPipelineTest(unittest.TestCase):
         )
 
     def test_cbts_parser_preserves_coverage_preflight_fields(self) -> None:
-        parser = _function_body(
-            L0_PARENT, "_cbtsParseSelectionResult", "getOssComplianceFileChanged"
-        )
+        parser = _function_body(L0_PARENT, "_cbtsParseSelectionResult")
 
         self.assertIn(
             "coverage_residual_files: data.coverage_residual_files ?: []",
@@ -185,7 +169,7 @@ class InfraDryRunPipelineTest(unittest.TestCase):
         )
 
     def test_cbts_pin_policy_is_owned_by_python(self) -> None:
-        audit = _function_body(L0_PARENT, "_cbtsCoverageAudit", "_cbtsPrNumber")
+        audit = _function_body(L0_PARENT, "_cbtsCoverageAudit")
 
         self.assertIn("--resolve-pin cbts_db_pin.json", audit)
         self.assertIn("pinPlan.pin_upload_required", audit)
