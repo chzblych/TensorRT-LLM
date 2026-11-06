@@ -145,7 +145,7 @@ def launchStages(pipeline, reuseBuild, testFilter, enableFailFast, globalVars)
                 // CBTS deliberately does NOT short-circuit at the arch / Build
                 // layer. Build normally runs so a wheel exists for sanity checks
                 // and post-merge consumers; case-level narrowing happens later
-                // in L0_Test.groovy::launchTestJobs (Layer 2) and renderTestDB
+                // in test/Stages.groovy::launchTestJobs (Layer 2) and test/Db.groovy::renderTestDB
                 // (Layer 3).
                 // Nightly publishes the PackageSanityCheck wheel, while this
                 // build still provides the source tar consumed by test runners.

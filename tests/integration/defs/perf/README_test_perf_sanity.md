@@ -184,7 +184,8 @@ config-parse time rather than silently falling through to the default client.
 | `tests/integration/defs/perf/test_perf_sanity.py` | Main pytest entry point for all perf sanity tests | N/A |
 | `jenkins/scripts/perf/disaggregated/submit.py` | CI submission script (disaggregated tests only) | Uses `jenkins/scripts/perf/disaggregated/slurm_launch_draft.sh` |
 | `jenkins/scripts/perf/local/submit.py` | Local submission script (both aggregated and disaggregated tests) | Uses `jenkins/scripts/perf/aggregated/slurm_launch_draft.sh` or `jenkins/scripts/perf/disaggregated/slurm_launch_draft.sh` |
-| `jenkins/L0_Test.groovy` | Jenkins CI pipeline for test orchestration | N/A |
+| `jenkins/L0_Test.groovy` | Jenkins CI pipeline entry | N/A |
+| `jenkins/pipelines/test/stages.json` | Stage families and shard counts | N/A |
 
 ### SLURM Launch Script Generation
 
@@ -455,13 +456,13 @@ Test lists are defined in `tests/integration/test_lists/test-db/`.
 
 ### Jenkins Pipeline Configuration
 
-Tests are defined in `jenkins/L0_Test.groovy` under the `launchTestJobs` function:
+Stage families are defined in `jenkins/pipelines/test/stages.json` and expanded by `StageCatalog`:
 
-| Config Variable | Test Type |
+| Catalog Group | Test Type |
 |-----------------|-----------|
 | `x86SlurmTestConfigs` | Single-node aggregated tests |
-| `SBSASlurmTestConfigs` | Multi-node aggregated tests |
-| `multiNodesSBSAConfigs` | Multi-node disaggregated tests |
+| `SBSASlurmTestConfigs` | SBSA/Grace aggregated tests |
+| `multiNodesSBSAConfigs` | Multi-node aggregated and disaggregated tests |
 
 ## CI Stage Rules
 
@@ -582,12 +583,13 @@ When working with perf sanity tests, use these paths:
 | CI submit (disagg only) | `jenkins/scripts/perf/disaggregated/submit.py` |
 | Local submit (all) | `jenkins/scripts/perf/local/submit.py` |
 | Jenkins pipeline | `jenkins/L0_Test.groovy` |
+| CI stage catalog | `jenkins/pipelines/test/stages.json` |
 | Test database | `tests/integration/test_lists/test-db/` |
 | Test waives | `tests/integration/test_lists/waives.txt` |
 
 ## Step-by-Step: Adding or Re-enabling Disaggregated Perf Sanity Tests
 
-When adding a new disaggregated perf sanity test (or uncommenting an existing one), you must update **two files**: the test-db YAML and `jenkins/L0_Test.groovy`. This section describes how to locate and edit each one.
+When adding a new disaggregated perf sanity test (or uncommenting an existing one), you must update **two files**: the test-db YAML and `jenkins/pipelines/test/stages.json`. This section describes how to locate and edit each one.
 
 ### Step 1: Identify the Disaggregated Config YAML
 
@@ -665,32 +667,46 @@ Each disagg test line in the test-db file follows one of these formats:
   sbatch session also has to hold the install and launch.
 - Count the total number of **active (uncommented) tests** in the file — you will need this count for Step 5.
 
-### Step 5: Update `jenkins/L0_Test.groovy`
+### Step 5: Update the Stage Catalog
 
-Open `jenkins/L0_Test.groovy` and search for the `multiNodesSBSAConfigs` section inside `launchTestJobs()`. Disaggregated perf sanity stages are added via `buildStageConfigs()`:
+Open `jenkins/pipelines/test/stages.json` and find the `multiNodesSBSAConfigs`
+group. Each object in its `stages` list declares one family, for example:
 
-```groovy
-def buildStageConfigs(stageName, platform, testlist, testCount, gpuCount, nodeCount, runWithSbatch=false)
+```json
+{
+  "name": "GB200-8_GPUs-2_Nodes-PyTorch-Disagg-PerfSanity-CTX1-NODE1-GPU1-GEN1-NODE1-GPU4-Post-Merge-{shard}",
+  "platform": "auto:gb200-flex",
+  "testList": "l0_gb200_multi_nodes_perf_sanity_ctx1_node1_gpu1_gen1_node1_gpu4",
+  "splits": 2,
+  "gpuCount": 8,
+  "nodeCount": 2,
+  "runner": "sbatch",
+  "options": {
+    "runWithSbatch": false,
+    "useClusterDurations": false
+  },
+  "discoverable": false
+}
 ```
 
-| Parameter | Description |
-|-----------|-------------|
-| `stageName` | CI stage name prefix (see naming convention below) |
-| `platform` | Hardware platform, e.g., `"auto:gb200-flex"` |
-| `testlist` | Test-db filename **without** `.yml`, e.g., `"l0_gb200_multi_nodes_perf_sanity_ctx1_node1_gpu1_gen1_node1_gpu4"` |
-| `testCount` | Number of **active (uncommented)** tests in the test-db file. Each disagg test gets its own stage, so `testCount` must equal the number of active tests. |
-| `gpuCount` | Total GPUs from Step 2 (= `total_nodes * gpus_per_node`) |
-| `nodeCount` | Total nodes from Step 2 |
+| Field | Description |
+| --- | --- |
+| `name` | CI stage name with one `{shard}` placeholder; expanded to `1..splits` |
+| `platform` | Hardware platform, e.g. `auto:gb200-flex` |
+| `testList` | Test-db filename without `.yml` |
+| `splits` | Active test count for these one-test-per-stage perf families |
+| `gpuCount` | Total GPUs from Step 2 |
+| `nodeCount` | Total nodes from Step 2; multiple nodes use native `sbatch` |
 
-**Stage naming convention:**
+Keep the naming convention shown above, including the `Post-Merge` marker when
+appropriate. If a family already uses the test-db file, update its single
+`splits` value to the new active test count. Otherwise add one family object in
+the appropriate group, keeping the group ordered by node count. Preserve existing
+`options` and `discoverable` values. A legacy `discoverable: false` family still
+runs but remains outside the old Python discovery view.
 
-```
-GB200-{gpuCount}_GPUs-{nodeCount}_Nodes-PyTorch-Disagg-PerfSanity-CTX{num_ctx}-NODE{nodes_per_ctx}-GPU{ctx_tp}-GEN{num_gen}-NODE{nodes_per_gen}-GPU{gen_tp}-Post-Merge
-```
-
-**If a `buildStageConfigs` entry already exists** for the test-db file: update `testCount` to match the new total number of active tests.
-
-**If no entry exists** for the test-db file: add a new `buildStageConfigs` block. Insert it in the correct section sorted by node count (2 Nodes, 3 Nodes, 4 Nodes, etc.).
+The catalog generates every shard name, index and total. See
+`jenkins/pipelines/README.md` for the runner schema and validation commands.
 
 ### Step 6: Check Waives
 
@@ -706,5 +722,5 @@ Checking the existing `qwen3-235b-fp4_8k1k_con64_ctx1_tp1_gen1_tep4_eplb0_mtp0_c
 4. Test-db file: `l0_gb200_multi_nodes_perf_sanity_ctx1_node1_gpu1_gen1_node1_gpu4.yml`
 5. Locate `perf/test_perf_sanity.py::test_e2e[disagg_upload-gen_only-gb200_qwen3-235b-fp4_8k1k_con64_ctx1_tp1_gen1_tep4_eplb0_mtp0_ccb-NIXL]`. It is currently active with `TIMEOUT (30)`; do not add a duplicate. Uncomment it only if it has been disabled.
 6. Recount the active tests after any edits.
-7. In `L0_Test.groovy`, find the `buildStageConfigs` for `l0_gb200_multi_nodes_perf_sanity_ctx1_node1_gpu1_gen1_node1_gpu4` and set `testCount` to that count, preserving it if unchanged.
+7. In `jenkins/pipelines/test/stages.json`, find the family whose `testList` is `l0_gb200_multi_nodes_perf_sanity_ctx1_node1_gpu1_gen1_node1_gpu4` and set its one `splits` value to that count, preserving it if unchanged.
 8. Check `waives.txt` for the exact test ID before enabling the test.

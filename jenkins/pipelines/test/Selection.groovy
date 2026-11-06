@@ -217,13 +217,4 @@ def ensureStageResultNotUploaded(stageName) {
     }
 }
 
-def buildStageConfigs(stageName, platform, testlist, testCount, gpuCount, nodeCount, runWithSbatch=false, useClusterDurations=false) {
-    def configs = [:]
-    for (int k = 1; k <= testCount; k++) {
-        def key = "${stageName}-${k}"
-        configs[key] = [platform, testlist, k, testCount, gpuCount, nodeCount, runWithSbatch, useClusterDurations]
-    }
-    return configs
-}
-
 return this

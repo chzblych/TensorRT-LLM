@@ -59,8 +59,8 @@ See [`local/README.md`](local/README.md) for full argument reference and example
 
 ### `disaggregated/submit.py`
 
-Used by the **CI pipeline** (called from `jenkins/L0_Test.groovy`'s
-`runLLMTestlistWithSbatch`). Only supports **disaggregated** mode. It receives a
+Used by the **CI pipeline** (called from
+`jenkins/pipelines/test/SlurmSbatch.groovy::runLLMTestlistWithSbatch`). Only supports **disaggregated** mode. It receives a
 script prefix and srun args from the CI pipeline and combines them with disagg-specific
 environment variables and hardware configuration to generate `slurm_launch.sh`.
 
@@ -282,7 +282,7 @@ and benchmark srun steps never see MPI flags.
   ctx/gen srun commands only
 - `jenkins/scripts/perf/local/submit.py` — `--mpi=pmix` for aggregated mode only,
   no MPI flag for disaggregated mode (handled by the draft template)
-- `jenkins/L0_Test.groovy` — `--mpi=pmix` for non-disagg multi-node only
+- `jenkins/pipelines/test/SlurmSbatch.groovy` — `--mpi=pmix` for non-disagg multi-node only
 
 > The DLFW base image (PyTorch 26.03+) ships an Open MPI build with PMIx support
 > only and **no classic PMI-2**. Under `--mpi=pmi2` srun exposes a PMI-2 server
@@ -307,32 +307,32 @@ When modifying disaggregated SLURM scripts, keep these invariants:
 When adding or re-enabling perf sanity tests, two files must be updated:
 
 1. **Test-db YAML** in `tests/integration/test_lists/test-db/` — add or uncomment the test case line
-2. **`jenkins/L0_Test.groovy`** — update or add the CI stage in `launchTestJobs()`
+2. **`jenkins/pipelines/test/stages.json`** — update or add one stage-family definition and its `splits` count
 
 ### Where to Find CI Stage Definitions
 
-In `jenkins/L0_Test.groovy`, search for `launchTestJobs`. Perf sanity stages are grouped by test type:
+Open `jenkins/pipelines/test/stages.json`. Its groups select architecture and runner:
 
-| Config Variable | Test Type | Platform |
-|-----------------|-----------|----------|
-| `x86SlurmTestConfigs` | Single-node aggregated perf sanity (x86) | `"auto:h100-cr-x8"` etc. |
-| `SBSASlurmTestConfigs` | Single-node aggregated perf sanity (SBSA/Grace) | `"auto:gb200-x4"` etc. |
-| `multiNodesSBSAConfigs` | Multi-node aggregated **and** disaggregated perf sanity | `"auto:gb200-flex"` etc. |
+| Catalog group | Test type | Runner |
+| --- | --- | --- |
+| `x86SlurmTestConfigs` | x86 single-node perf sanity | `slurmAgent`, or `sbatch` for native submission |
+| `SBSASlurmTestConfigs` | SBSA/Grace perf sanity | `slurmAgent` or `sbatch` |
+| `multiNodesSBSAConfigs` | Multi-node aggregated and disaggregated perf sanity | `sbatch` for multi-node execution |
 
-### `buildStageConfigs` Function
+### Define a Family Once
 
-Disaggregated and multi-node perf sanity stages use `buildStageConfigs()`:
+Each family declares `name`, `platform`, `testList` (without `.yml`) and `splits`.
+Use `{shard}` once in `name`; the catalog expands shard indices and passes the
+same total to each stage. `gpuCount` is the total GPUs allocated per stage and
+`nodeCount` is its total Slurm nodes. For disaggregated and multi-node tests that
+run one test per stage, set `splits` to the number of active test-db entries.
 
-```groovy
-def buildStageConfigs(stageName, platform, testlist, testCount, gpuCount, nodeCount, runWithSbatch=false)
-```
-
-- `testlist`: test-db YAML filename without `.yml` extension
-- `testCount`: must equal the number of **active (uncommented)** tests in the test-db file (each disagg test gets its own CI stage)
-- `gpuCount`: total GPUs allocated per stage = `total_nodes * gpus_per_node`
-- `nodeCount`: total SLURM nodes per stage
-
-When adding a test, either increment `testCount` on an existing entry or add a new `buildStageConfigs` block. Stages are grouped by node count (2 Nodes, 3 Nodes, 4 Nodes, etc.).
+To add tests to an existing family, update its one `splits` value. To add a new
+family, add one object in the appropriate group; no Groovy shard rows or helper
+calls are needed. Keep existing `options` and `discoverable` values when editing
+a family. `discoverable: false` preserves legacy tool visibility and does not
+remove the family from runtime execution. See `jenkins/pipelines/README.md` for
+the schema, runner restrictions and local validation commands.
 
 For the full step-by-step guide including how to derive test-db filenames and GPU/node counts from disaggregated config YAMLs, see [`tests/integration/defs/perf/README_test_perf_sanity.md`](../../../tests/integration/defs/perf/README_test_perf_sanity.md) ("Step-by-Step: Adding or Re-enabling Disaggregated Perf Sanity Tests").
 

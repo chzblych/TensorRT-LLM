@@ -52,7 +52,7 @@ top-level directories when the configured include patterns name literal top-leve
 `testFilter[cbts_coverage]`: the `ENABLE_CBTS_COVERAGE` kill switch plus the post-merge gate, so
 coverage runs on the official post-merge pipeline only.
 
-`isCbtsStage()` in `jenkins/L0_Test.groovy` gates each stage on that flag plus:
+`isCbtsStage()` in `jenkins/pipelines/test/Execution.groovy` gates each stage on that flag plus:
 
 - not a perf stage, and not a TensorRT / CPP stage
 - single-GPU only — stages named with `-<N>_GPUs` or `-<N>_Nodes` are out of scope for phase 1
@@ -66,7 +66,7 @@ Every instrumented process is told what it is through `CBTS_PROCESS_ROLE`:
 
 | Value | Set by | Effect |
 |---|---|---|
-| `outer_pytest` | `jenkins/L0_Test.groovy`, beside the other `CBTS_*` vars | tracker starts at once; the plugin owns context announcements and installs the pool patch |
+| `outer_pytest` | `jenkins/pipelines/test/Execution.groovy::getPytestBaseCommandLine` | tracker starts at once; the plugin owns context announcements and installs the pool patch |
 | `inner_pytest` | `tests/integration/defs/test_unittests.py` | tracker starts at once; holds the inherited `CBTS_TEST_ID` for the whole batch and installs the pool patch itself |
 | *(unset)* | — | product process: pool workers, `trtllm-serve`, helper subprocesses |
 

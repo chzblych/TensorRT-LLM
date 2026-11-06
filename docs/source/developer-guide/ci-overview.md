@@ -31,7 +31,7 @@ This page explains how TensorRT‑LLM's CI is organized and how individual tests
 
 ## CI pipelines
 
-Pull requests do not start testing by themselves. Developers trigger the CI by commenting `/bot run` (optionally with arguments) on the pull request (see [Pull Request Template](source:.github/pull_request_template.md) for more details). That kicks off the **merge-request pipeline** (defined in `jenkins/L0_MergeRequest.groovy`), which runs unit tests and integration tests whose YAML entries specify `stage: pre_merge`. Once a pull request is merged, the **post-merge pipeline** runs the same `jenkins/L0_MergeRequest.groovy` as a separate Jenkins job. It runs the pre-merge stages plus the multi-GPU stages and every stage with `Post-Merge` in its name. In both pipelines, the test stages run in child jobs defined by `jenkins/L0_Test.groovy`, which maps each stage name to a test-db YAML file.
+Pull requests do not start testing by themselves. Developers trigger the CI by commenting `/bot run` (optionally with arguments) on the pull request (see [Pull Request Template](source:.github/pull_request_template.md) for more details). That kicks off the **merge-request pipeline** (defined in `jenkins/L0_MergeRequest.groovy`), which runs unit tests and integration tests whose YAML entries specify `stage: pre_merge`. Once a pull request is merged, the **post-merge pipeline** runs the same `jenkins/L0_MergeRequest.groovy` as a separate Jenkins job. It runs the pre-merge stages plus the multi-GPU stages and every stage with `Post-Merge` in its name. In both pipelines, the test stages run in child jobs defined by `jenkins/L0_Test.groovy`, which uses `jenkins/pipelines/test/stages.json` for stage-to-test-db mappings.
 
 `stage` tags live in the YAML files under `tests/integration/test_lists/test-db/`. Searching those files for `stage: pre_merge` shows exactly which tests the merge-request pipeline covers.
 
@@ -58,26 +58,35 @@ Unit tests live under `tests/unittest/`. They are listed in the same test-db YAM
 
 ## Jenkins stage names
 
-`jenkins/L0_Test.groovy` maps stage names to these YAML files.  For A100 the mapping includes:
+`jenkins/pipelines/test/stages.json` maps stage families to test-db YAML files.
+For A100 the catalog includes:
 
-```groovy
-    "A100X-PyTorch-1": ["a100x", "l0_a100", 1, 1],
-    "A100X-PyTorch-Post-Merge-1": ["a100x", "l0_a100", 1, 1],
+```json
+[
+  {"name": "A100X-PyTorch-{shard}", "platform": "a100x", "testList": "l0_a100", "splits": 1},
+  {"name": "A100X-PyTorch-Post-Merge-{shard}", "platform": "a100x", "testList": "l0_a100", "splits": 1}
+]
 ```
 
-The array elements are: GPU type, YAML file (without extension), shard index, and total number of shards. Only tests with `stage: post_merge` from that YAML file are selected when a `Post-Merge` stage runs.
+The catalog expands `{shard}` to `1..splits`; these families produce
+`A100X-PyTorch-1` and `A100X-PyTorch-Post-Merge-1`. A multi-shard family declares
+its total only once. Only tests with `stage: post_merge` from that YAML file are
+selected when a `Post-Merge` stage runs.
 
-Stage names are unbracketed, with `Post-Merge` embedded directly in the name. Copy the name exactly as it appears in the Groovy map. Jenkins `stage_list` matches names without a `*` wildcard exactly, so a stale spelling such as `A100X-Triton-[Post-Merge]-1` silently selects nothing. The mapping script's `--stages` option is stricter: it reports unknown names and near-match suggestions on stderr.
+Stage names are unbracketed. Use the expanded stage name, or the mapping CLI
+below, when setting `stage_list`. Names without a `*` wildcard match exactly;
+a stale spelling such as `A100X-Triton-[Post-Merge]-1` silently selects nothing.
+The mapping script's `--stages` option reports unknown names and near matches.
 
 ## Finding the stage for a test
 
 1. Locate the test in the appropriate YAML file under `tests/integration/test_lists/test-db/` and note its `stage` and `backend` values.
-2. Search `jenkins/L0_Test.groovy` for a stage whose YAML file matches (for example `l0_a100`) and whose name contains `Post-Merge` if the YAML entry uses `stage: post_merge`.
+2. Find the matching `testList` in `jenkins/pipelines/test/stages.json` (for example `l0_a100`), selecting the `Post-Merge` family when the YAML entry uses `stage: post_merge`, or use the mapping CLI below.
 3. The resulting stage name(s) are what you pass to Jenkins via the `stage_list` parameter when triggering a job.
 
 ### Using `test_to_stage_mapping.py`
 
-Manually searching YAML and Groovy files can be tedious.  The helper script
+Manually searching YAML and catalog files can be tedious.  The helper script
 `scripts/test_to_stage_mapping.py` automates the lookup:
 
 ```bash
@@ -176,8 +185,8 @@ default pre-merge set:
 /bot run --extra-stage "stage-A,stage-B"
 ```
 
-Both options accept stage names and wildcard patterns defined in
-`jenkins/L0_Test.groovy`. Explicit Post-merge stage test doesn't need
+Both options match the expanded stage names from
+`jenkins/pipelines/test/stages.json` and accept wildcard patterns. Explicit Post-merge stage test doesn't need
 `ci: post-merge approved` PR label to run. However, the `"*"`,
 `"*Post-Merge*"`, and `"*PerfSanity*"` selectors require the same approval
 label, including when they appear in a comma-separated list. Equivalent escaped
