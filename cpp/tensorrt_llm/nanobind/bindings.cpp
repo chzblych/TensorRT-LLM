@@ -31,6 +31,7 @@
 
 #include "tensorrt_llm/batch_manager/peftCacheManagerConfig.h"
 #include "tensorrt_llm/common/cudaArchitectures.h"
+#include "tensorrt_llm/common/opUtils.h"
 #include "tensorrt_llm/common/quantization.h"
 #include "tensorrt_llm/common/tllmDataType.h"
 #include "tensorrt_llm/kernels/gptKernels.h"
@@ -81,6 +82,14 @@ NB_MODULE(TRTLLM_NB_MODULE, m)
 {
     m.doc() = "TensorRT LLM Python bindings for C++ runtime";
     nb::set_leak_warnings(false);
+
+#if ENABLE_MULTI_DEVICE
+    // Python exit callbacks run before the main thread's TLS is torn down.
+    // Keep the cache shared for the interpreter's lifetime, including between
+    // LLM instances, then release it while NCCL plugins can still use TLS.
+    m.def("_shutdown_comm_cache", &tensorrt_llm::shutdownCommCache, nb::call_guard<nb::gil_scoped_release>());
+    nb::module_::import_("atexit").attr("register")(m.attr("_shutdown_comm_cache"));
+#endif // ENABLE_MULTI_DEVICE
 
     // Create MpiComm binding first since it's used in the executor bindings
     nb::class_<tensorrt_llm::mpi::MpiComm>(m, "MpiComm")

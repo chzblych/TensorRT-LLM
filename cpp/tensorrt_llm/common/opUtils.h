@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 1993-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -153,6 +153,11 @@ void const* getCommSessionHandle();
 std::unordered_map<tensorrt_llm::DataType, ncclDataType_t>* getDtypeMap();
 
 std::shared_ptr<ncclComm_t> getComm(std::set<int> const& group);
+
+//! Permanently close the process-wide cache at process/interpreter shutdown,
+//! after workers have stopped. Outstanding shared owners remain valid and must
+//! release their communicators before thread-local runtime teardown.
+void shutdownCommCache();
 
 #endif // ENABLE_MULTI_DEVICE
 

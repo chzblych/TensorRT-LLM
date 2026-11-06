@@ -53,6 +53,19 @@ std::unordered_map<tensorrt_llm::DataType, ncclDataType_t>* getDtypeMap()
 namespace
 {
 
+struct CommCache
+{
+    std::mutex mutex;
+    std::map<std::set<int>, std::shared_ptr<ncclComm_t>> comms;
+    bool shutdown = false;
+};
+
+CommCache& getCommCache()
+{
+    static CommCache cache;
+    return cache;
+}
+
 // Get NCCL unique ID for a group of ranks.
 ncclUniqueId getUniqueId(std::set<int> const& group)
 {
@@ -80,9 +93,10 @@ std::shared_ptr<ncclComm_t> getComm(std::set<int> const& group)
 {
     auto const rank = COMM_SESSION.getRank();
     TLLM_LOG_TRACE("%s start for rank %d", __PRETTY_FUNCTION__, rank);
-    static std::map<std::set<int>, std::shared_ptr<ncclComm_t>> commMap;
-    static std::mutex mutex;
-    std::lock_guard<std::mutex> lock(mutex);
+    auto& cache = getCommCache();
+    std::lock_guard<std::mutex> lock(cache.mutex);
+    TLLM_CHECK_WITH_INFO(!cache.shutdown, "NCCL communicator cache has been shut down");
+    auto& commMap = cache.comms;
     std::ostringstream oss;
     int index = 0;
     for (auto const& rank : group)
@@ -183,6 +197,20 @@ std::shared_ptr<ncclComm_t> getComm(std::set<int> const& group)
     commMap[group] = ncclComm;
     TLLM_LOG_TRACE("%s stop for rank %d", __PRETTY_FUNCTION__, rank);
     return ncclComm;
+}
+
+void shutdownCommCache()
+{
+    auto& cache = getCommCache();
+    decltype(cache.comms) comms;
+    {
+        std::lock_guard<std::mutex> lock(cache.mutex);
+        cache.shutdown = true;
+        comms.swap(cache.comms);
+    }
+    // Release only the cache's ownership, outside the lock. Other owners keep
+    // their communicator alive; its deleter cleans registered resources before
+    // destroying NCCL when the last owner releases it.
 }
 #endif // ENABLE_MULTI_DEVICE
 
