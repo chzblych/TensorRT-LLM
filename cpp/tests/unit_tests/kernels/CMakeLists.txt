@@ -54,13 +54,17 @@ if(USING_OSS_CUTLASS_MOE_GEMM)
             TEST_PREFIX "Internal.")
   remove_compile_definition(mixtureOfExpertsInternalTest
                             USING_OSS_CUTLASS_MOE_GEMM)
-  set(internal_moe_test mixtureOfExpertsInternalTest)
-else()
-  set(internal_moe_test mixtureOfExpertsTest)
 endif()
 if(TRTLLM_TEST_LIB_DIR)
-  target_sources(${internal_moe_test}
-                 PRIVATE ../../../tensorrt_llm/kernels/quantization.cu)
+  add_library(kernel_test_quantization STATIC EXCLUDE_FROM_ALL
+              ../../../tensorrt_llm/kernels/quantization.cu)
+  target_compile_features(kernel_test_quantization PRIVATE cxx_std_20)
+  target_link_libraries(kernel_test_quantization PRIVATE ${SHARED_TARGET}_test)
+  foreach(test mixtureOfExpertsTest mixtureOfExpertsInternalTest)
+    if(TARGET ${test})
+      target_link_libraries(${test} PRIVATE kernel_test_quantization)
+    endif()
+  endforeach()
 endif()
 
 add_tllm_gtest(
