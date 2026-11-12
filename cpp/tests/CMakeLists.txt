@@ -35,6 +35,55 @@ endif()
 
 set(TOP_LEVEL_DIR "${PROJECT_SOURCE_DIR}/..")
 
+set(TRTLLM_TEST_LIB_DIR
+    ""
+    CACHE PATH "Installed libraries from the matching CI build")
+foreach(library ${SHARED_TARGET} decoder_attention_0 decoder_attention_1
+                tensorrt_llm_nixl_wrapper tensorrt_llm_mooncake_wrapper)
+  if(TARGET ${library})
+    if(TRTLLM_TEST_LIB_DIR)
+      add_library(${library}_test SHARED IMPORTED)
+      set_target_properties(
+        ${library}_test PROPERTIES IMPORTED_LOCATION
+                                   "${TRTLLM_TEST_LIB_DIR}/lib${library}.so")
+      if(library MATCHES "_wrapper$")
+        target_link_libraries(${library}_test INTERFACE ${SHARED_TARGET}_test)
+      endif()
+    else()
+      add_library(${library}_test ALIAS ${library})
+    endif()
+  endif()
+endforeach()
+if(TRTLLM_TEST_LIB_DIR)
+  target_include_directories(
+    ${SHARED_TARGET}_test
+    INTERFACE $<TARGET_PROPERTY:${SHARED_TARGET},INTERFACE_INCLUDE_DIRECTORIES>)
+  target_compile_definitions(
+    ${SHARED_TARGET}_test
+    INTERFACE $<TARGET_PROPERTY:${SHARED_TARGET},INTERFACE_COMPILE_DEFINITIONS>)
+  target_compile_options(
+    ${SHARED_TARGET}_test
+    INTERFACE $<TARGET_PROPERTY:${SHARED_TARGET},INTERFACE_COMPILE_OPTIONS>)
+  # Tests call decoder/CUDA APIs directly; keep source component targets out.
+  target_link_libraries(
+    ${SHARED_TARGET}_test
+    INTERFACE decoder_attention_0_test
+              decoder_attention_1_test
+              CUDA::cudart
+              ${CUDA_DRV_LIB}
+              ${CUBLAS_LIB}
+              ${CUBLASLT_LIB}
+              ${CURAND_LIB}
+              ${CMAKE_DL_LIBS})
+  if(ENABLE_MULTI_DEVICE)
+    target_link_libraries(${SHARED_TARGET}_test INTERFACE ${MPI_C_LIBRARIES}
+                                                          ${NCCL_LIB})
+  endif()
+  # dlopen-based tests must use the same CI libraries as directly linked tests.
+  set(CMAKE_BUILD_RPATH "${TRTLLM_TEST_LIB_DIR};${CMAKE_BUILD_RPATH}")
+  add_link_options("LINKER:--disable-new-dtags")
+endif()
+
 add_custom_target(google-tests)
 foreach(owner common runtime executor batch-manager kernel)
   add_custom_target(${owner}-tests)
@@ -44,7 +93,8 @@ function(tllm_assert_test_is_component_local target)
   get_target_property(link_libraries ${target} LINK_LIBRARIES)
   # Reject expressions mentioning the full target in any configuration branch.
   string(REGEX REPLACE "[$<>:,]" ";" link_tokens "${link_libraries}")
-  if("${SHARED_TARGET}" IN_LIST link_tokens)
+  if("${SHARED_TARGET}" IN_LIST link_tokens OR "${SHARED_TARGET}_test" IN_LIST
+                                               link_tokens)
     message(
       FATAL_ERROR
         "${target} links the full TensorRT-LLM library; use FULL_STACK explicitly"
@@ -56,7 +106,8 @@ function(tllm_assert_test_is_component_local target)
     endif()
     get_target_property(dep_interface ${dep} INTERFACE_LINK_LIBRARIES)
     string(REGEX REPLACE "[$<>:,]" ";" dep_interface_tokens "${dep_interface}")
-    if("${SHARED_TARGET}" IN_LIST dep_interface_tokens)
+    if("${SHARED_TARGET}" IN_LIST dep_interface_tokens
+       OR "${SHARED_TARGET}_test" IN_LIST dep_interface_tokens)
       message(
         FATAL_ERROR
           "${target} links ${dep}, which interface-links the full TensorRT-LLM library; use FULL_STACK explicitly"
@@ -93,7 +144,7 @@ function(add_tllm_gtest test_name)
     target_link_libraries(${test_name} PRIVATE gtest_main)
   endif()
   if(ARG_FULL_STACK)
-    target_link_libraries(${test_name} PRIVATE ${SHARED_TARGET})
+    target_link_libraries(${test_name} PRIVATE ${SHARED_TARGET}_test)
     if(WIN32)
       target_link_libraries(${test_name} PRIVATE context_attention_src)
     endif()
@@ -143,7 +194,7 @@ function(add_gtest test_name test_src)
     target_link_libraries(${test_name} PUBLIC gtest_main)
   endif()
   if(NOT ARGS_NO_TLLM_LINKAGE)
-    target_link_libraries(${test_name} PUBLIC ${SHARED_TARGET})
+    target_link_libraries(${test_name} PUBLIC ${SHARED_TARGET}_test)
     if(WIN32)
       target_link_libraries(${test_name} PRIVATE context_attention_src)
     endif()

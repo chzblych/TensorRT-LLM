@@ -26,6 +26,12 @@ add_tllm_gtest(
   "unit;kernels;logits;gpu")
 add_gtest(cascadeAttentionKernelTest cascadeAttentionKernelTest.cpp)
 add_gtest(cascadeAttentionNumericsTest cascadeAttentionNumericsTest.cu)
+if(TRTLLM_TEST_LIB_DIR)
+  # The wheel does not retain the unused linear-cache MMHA entry point.
+  target_sources(
+    cascadeAttentionNumericsTest
+    PRIVATE ../../../tensorrt_llm/kernels/decoderMaskedMultiheadAttention.cu)
+endif()
 
 macro(remove_compile_definition TARGET_NAME DEFINITION)
   get_target_property(DEFS ${TARGET_NAME} COMPILE_DEFINITIONS)

@@ -221,9 +221,10 @@ C++ integration fixtures build the collected tests with incremental native targe
 `cpp-tests-executor-bounce`) mirror recursive CTest directory coverage, including
 legacy and full-stack executables. OWNER aggregates are component subsets and
 are not interchangeable with these directory targets.
-The Linux Release integration fixture links the RNN formatter test to the
-installed CI wheel. CI packages source and wheel from the same commit and uses
-the same image per architecture; local integration runs must supply a matching
+The Linux Release integration fixture links full-stack and legacy tests to the
+installed CI wheel, including decoder attention libraries and explicitly linked
+NIXL/Mooncake wrappers. CI packages source and wheel from the same commit and
+uses the same image per architecture; local integration runs must supply a matching
 wheel too. Link/load errors must fail the tests, not trigger a source rebuild.
 Direct CMake builds retain the source-library path unless explicitly configured.
 
