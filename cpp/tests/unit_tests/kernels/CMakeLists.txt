@@ -46,6 +46,7 @@ add_gtest(mixtureOfExpertsTest moe/mixtureOfExpertsTest.cu)
 
 # If we are using oss cutlass, build an explicit internal test
 if(USING_OSS_CUTLASS_MOE_GEMM)
+  target_link_libraries(mixtureOfExpertsTest PRIVATE moe_gemm_src)
   target_compile_definitions(mixtureOfExpertsTest
                              PUBLIC USING_OSS_CUTLASS_MOE_GEMM)
 
@@ -53,6 +54,13 @@ if(USING_OSS_CUTLASS_MOE_GEMM)
             TEST_PREFIX "Internal.")
   remove_compile_definition(mixtureOfExpertsInternalTest
                             USING_OSS_CUTLASS_MOE_GEMM)
+  set(internal_moe_test mixtureOfExpertsInternalTest)
+else()
+  set(internal_moe_test mixtureOfExpertsTest)
+endif()
+if(TRTLLM_TEST_LIB_DIR)
+  target_sources(${internal_moe_test}
+                 PRIVATE ../../../tensorrt_llm/kernels/quantization.cu)
 endif()
 
 add_tllm_gtest(
@@ -101,6 +109,11 @@ add_tllm_gtest(
   "unit;kernels;sparse-attention;gpu")
 
 add_gtest(cudaCoreGemmKernelTest cudaCoreGemm/cudaCoreGemmKernelTest.cpp)
+if(TRTLLM_TEST_LIB_DIR)
+  target_sources(
+    cudaCoreGemmKernelTest
+    PRIVATE ../../../tensorrt_llm/kernels/weightOnlyBatchedGemv/cudaCoreGemm.cu)
+endif()
 
 add_tllm_gtest(
   mlaChunkedPrefillTest
