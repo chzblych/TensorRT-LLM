@@ -216,6 +216,11 @@ New C++ unit tests should use `add_tllm_gtest` with explicit `SOURCES`,
 for integration tests and include `gpu` in `LABELS` for tests that need a GPU.
 CI controls test concurrency through `parallel_run_ctest`. `google-tests`
 continues to build all C++ tests; component aggregate targets build migrated tests.
+C++ integration fixtures build the collected tests with incremental native targets.
+`cpp-tests-<directory>` targets (for example `cpp-tests-common` or
+`cpp-tests-executor-bounce`) mirror recursive CTest directory coverage, including
+legacy and full-stack executables. OWNER aggregates are component subsets and
+are not interchangeable with these directory targets.
 
 ### Advisory semantic review
 

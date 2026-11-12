@@ -14,7 +14,6 @@
 # limitations under the License.
 
 import datetime
-import glob
 import logging as _logger
 import os as _os
 import pathlib as _pl
@@ -145,6 +144,10 @@ def parallel_run_ctest(
     timeout=None,
     parallel=default_test_parallel,
 ) -> None:
+    report = _pl.Path(command[command.index("--output-junit") + 1])
+    if not report.is_absolute():
+        report = cwd / report
+    report.unlink(missing_ok=True)
     if parallel == 1:
         return run_ctest(command,
                          cwd=cwd,
@@ -155,26 +158,17 @@ def parallel_run_ctest(
     env = {} if env is None else env
     env['CTEST_PARALLEL_LEVEL'] = str(parallel)
 
-    def get_report():
-        reports = glob.glob("results-*.xml", root_dir=cwd)
-        if not reports:
-            return ''
-
-        return reports[0]
-
-    report = None
     try:
         run_ctest(command, cwd=cwd, shell=shell, env=env, timeout=timeout)
     # except _sp.TimeoutExpired:
     # Deliberately let timeout propagate. We don't want to retry on timeout
     except _sp.CalledProcessError:
-        report = get_report()
-        if report == '':
+        if not report.is_file():
             # Some catastrophic fail happened that there's no report generated
             raise
 
         # Avoid .xml extension to prevent CI from reading failures from it
-        parallel_report = 'parallel-' + report + ".intermediate"
+        parallel_report = 'parallel-' + report.name + ".intermediate"
         _os.rename(cwd / report, cwd / parallel_report)
 
         try:
@@ -188,12 +182,10 @@ def parallel_run_ctest(
                 # Use parallel result as final report
                 _os.rename(cwd / parallel_report, cwd / report)
             else:
-                retry_report = 'retry-' + report + ".intermediate"
+                retry_report = 'retry-' + report.name + ".intermediate"
                 _os.rename(cwd / report, cwd / retry_report)
                 merge_report(cwd / parallel_report, cwd / retry_report,
                              cwd / report)
     finally:
-        if report is None:
-            report = get_report()
-        if report:
+        if report.is_file():
             add_parallel_info(cwd / report, parallel)

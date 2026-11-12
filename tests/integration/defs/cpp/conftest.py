@@ -27,6 +27,7 @@ __extra_import_path__ = ["~/scripts"]
 import defs.cpp.cpp_common as _cpp
 import pytest
 from build_wheel import main as build_trt_llm
+from defs.cpp.build_targets import selected_build_targets
 
 
 @pytest.fixture(scope="session")
@@ -124,16 +125,28 @@ def build_google_tests(request, build_type):
         cuda_architectures=cuda_arch,
         job_count=12,
         use_ccache=True,
-        clean=True,
         generator="Ninja",
         nixl_root="/opt/nvidia/nvda_nixl",
         skip_building_wheel=True,
-        extra_make_targets=["google-tests"],
+        configure_only=True,
+        generate_fmha=True,
         # The DLFW base image ships no libnvrtc_static.a, so the default
         # CUDA::nvrtc_static target does not exist. The wheel builds get
         # NVRTC_DYNAMIC_LINKING=ON implicitly (via ENABLE_BOLT_COMPATIBLE);
         # this test-time build has no BOLT, so ask for it explicitly.
         nvrtc_dynamic_linking=True,
+    )
+
+    build_dir = _cpp.find_build_dir(build_type)
+    _cpp.run_command(
+        [
+            "cmake", "--build",
+            str(build_dir), "--config", build_type, "--parallel", "12",
+            "--target",
+            *selected_build_targets(request.session.items, cuda_arch)
+        ],
+        cwd=build_dir,
+        env=_os.environ,
     )
 
 

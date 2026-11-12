@@ -177,3 +177,42 @@ function(add_gtest test_name test_src)
 endfunction()
 
 add_subdirectory(unit_tests)
+
+# Directory groups mirror recursive CTest discovery, including legacy and
+# full-stack tests that are not part of an OWNER aggregate.
+function(add_tllm_test_directory_group directory)
+  file(RELATIVE_PATH group "${PROJECT_SOURCE_DIR}/tests/unit_tests"
+       "${directory}")
+  string(REPLACE "/" "-" group "${group}")
+  set(group_target "cpp-tests-${group}")
+  add_custom_target(${group_target})
+  get_property(
+    targets
+    DIRECTORY "${directory}"
+    PROPERTY BUILDSYSTEM_TARGETS)
+  foreach(target IN LISTS targets)
+    get_target_property(type ${target} TYPE)
+    if(type STREQUAL "EXECUTABLE")
+      add_dependencies(${group_target} ${target})
+    endif()
+  endforeach()
+  get_property(
+    children
+    DIRECTORY "${directory}"
+    PROPERTY SUBDIRECTORIES)
+  foreach(child IN LISTS children)
+    add_tllm_test_directory_group("${child}")
+    add_dependencies(${group_target} ${TLLM_TEST_DIRECTORY_TARGET})
+  endforeach()
+  set(TLLM_TEST_DIRECTORY_TARGET
+      ${group_target}
+      PARENT_SCOPE)
+endfunction()
+
+get_property(
+  test_directories
+  DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/unit_tests"
+  PROPERTY SUBDIRECTORIES)
+foreach(directory IN LISTS test_directories)
+  add_tllm_test_directory_group("${directory}")
+endforeach()

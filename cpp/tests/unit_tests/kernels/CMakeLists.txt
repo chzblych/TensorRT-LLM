@@ -218,8 +218,8 @@ add_tllm_gtest(
   kernel
   SOURCES
   fmhaDispatcherTest.cpp
+  ../../../tensorrt_llm/kernels/fmhaDispatcher.cpp
   LINK_LIBRARIES
-  kernels_src
   context_attention_src
   trtllm_gen_fmha
   ${CUDA_DRV_LIB}
