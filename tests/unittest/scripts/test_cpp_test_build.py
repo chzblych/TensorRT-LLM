@@ -116,8 +116,12 @@ def test_failed_ctest_without_new_report_cannot_retry_stale_results(
     assert unrelated.read_text() == "another group"
 
 
-def test_retry_merges_only_the_current_report(cpp_common, monkeypatch, tmp_path):
+@pytest.mark.parametrize("relative_cwd", [False, True])
+def test_retry_merges_only_the_current_report(cpp_common, monkeypatch, tmp_path, relative_cwd):
+    monkeypatch.chdir(tmp_path.parent)
+    cwd = Path(tmp_path.name) if relative_cwd else tmp_path
     current = tmp_path / "results-current.xml"
+    report_arg = current.name if relative_cwd else str(current)
     unrelated = tmp_path / "results-other.xml"
     unrelated.write_text("another group")
     calls = []
@@ -133,7 +137,7 @@ def test_retry_merges_only_the_current_report(cpp_common, monkeypatch, tmp_path)
         assert "CTEST_PARALLEL_LEVEL" not in kwargs["env"]
 
     monkeypatch.setattr(cpp_common, "run_ctest", run)
-    cpp_common.parallel_run_ctest(["ctest", "--output-junit", str(current)], cwd=tmp_path)
+    cpp_common.parallel_run_ctest(["ctest", "--output-junit", report_arg], cwd=cwd)
     assert len(calls) == 2
     assert 'parallel="2"' in current.read_text()
     assert unrelated.read_text() == "another group"
@@ -183,3 +187,21 @@ def test_directory_groups_include_legacy_full_stack_and_nested_tests(tmp_path):
         capture_output=True,
         text=True,
     )
+
+
+@pytest.mark.parametrize("configured_root", [None, "", "/custom/build", "relative-build"])
+def test_build_root_matches_configure_rules(cpp_common, monkeypatch, tmp_path, configured_root):
+    if configured_root is None:
+        monkeypatch.delenv("TRTLLM_BUILD_ROOT", raising=False)
+    else:
+        monkeypatch.setenv("TRTLLM_BUILD_ROOT", configured_root)
+    monkeypatch.setattr(cpp_common, "find_root_dir", lambda: tmp_path)
+    calls = []
+
+    def resolve(build_dir, build_type, *, build_root=None):
+        calls.append((build_dir, build_type, build_root))
+        return tmp_path / "resolved-build"
+
+    monkeypatch.setattr(cpp_common, "get_trt_llm_build_dir", resolve)
+    assert cpp_common.find_build_dir("Release") == tmp_path / "resolved-build"
+    assert calls == [(None, "Release", configured_root or None)]

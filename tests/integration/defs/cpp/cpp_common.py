@@ -55,7 +55,8 @@ def find_build_dir(build_type: str) -> _pl.Path:
         Absolute path to the C++ build directory.
     """
     root_dir = find_root_dir()
-    build_dir = get_trt_llm_build_dir(None, build_type)
+    build_root = _os.environ.get("TRTLLM_BUILD_ROOT") or None
+    build_dir = get_trt_llm_build_dir(None, build_type, build_root=build_root)
     return build_dir if build_dir.is_absolute() else root_dir / build_dir
 
 
@@ -146,7 +147,7 @@ def parallel_run_ctest(
 ) -> None:
     report = _pl.Path(command[command.index("--output-junit") + 1])
     if not report.is_absolute():
-        report = cwd / report
+        report = (cwd / report).resolve()
     report.unlink(missing_ok=True)
     if parallel == 1:
         return run_ctest(command,
