@@ -28,6 +28,7 @@ import defs.cpp.cpp_common as _cpp
 import pytest
 from build_wheel import main as build_trt_llm
 from defs.cpp.build_targets import selected_build_targets
+from defs.cpp.prebuilt_library import verified_rnn_library
 
 
 @pytest.fixture(scope="session")
@@ -119,6 +120,10 @@ def build_google_tests(request, build_type):
     cuda_arch = f"{request.param}"
 
     _logger.info(f"Using CUDA arch: {cuda_arch}")
+    targets = selected_build_targets(request.session.items, cuda_arch)
+    library = None
+    if "cpp-tests-batch_manager" in targets or "google-tests" in targets:
+        library = verified_rnn_library(_cpp.find_root_dir(), build_type)
 
     build_trt_llm(
         build_type=build_type,
@@ -130,6 +135,7 @@ def build_google_tests(request, build_type):
         skip_building_wheel=True,
         configure_only=True,
         generate_fmha=True,
+        extra_cmake_vars=[f"TRTLLM_RNN_TEST_LIBRARY={library or ''}"],
         # The DLFW base image ships no libnvrtc_static.a, so the default
         # CUDA::nvrtc_static target does not exist. The wheel builds get
         # NVRTC_DYNAMIC_LINKING=ON implicitly (via ENABLE_BOLT_COMPATIBLE);
@@ -142,8 +148,7 @@ def build_google_tests(request, build_type):
         [
             "cmake", "--build",
             str(build_dir), "--config", build_type, "--parallel", "12",
-            "--target",
-            *selected_build_targets(request.session.items, cuda_arch)
+            "--target", *targets
         ],
         cwd=build_dir,
         env=_os.environ,
