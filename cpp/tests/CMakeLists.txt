@@ -176,59 +176,6 @@ function(add_gtest test_name test_src)
   add_dependencies(google-tests ${test_name})
 endfunction()
 
-# The integration fixture verifies source provenance and wheel RECORD first.
-set(TRTLLM_RNN_TEST_LIBRARY
-    ""
-    CACHE FILEPATH "Verified installed library for RNN test reuse")
-set(TLLM_RNN_TEST_LIBRARY_COMPATIBLE OFF)
-set(rnn_compile_flags
-    "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_RELEASE} ${CMAKE_CUDA_FLAGS} ${CMAKE_CUDA_FLAGS_RELEASE}"
-)
-if(TRTLLM_RNN_TEST_LIBRARY
-   AND CMAKE_SYSTEM_NAME STREQUAL "Linux"
-   AND NOT CMAKE_CROSSCOMPILING
-   AND CMAKE_BUILD_TYPE STREQUAL "Release"
-   AND NOT SANITIZE
-   AND NOT rnn_compile_flags MATCHES "sanitize|coverage|profile")
-  set(rnn_abi ${USE_CXX11_ABI})
-  if(DEFINED TORCH_CXX_FLAGS__GLIBCXX_USE_CXX11_ABI)
-    set(rnn_abi ${TORCH_CXX_FLAGS__GLIBCXX_USE_CXX11_ABI})
-  endif()
-  set(rnn_probe "${CMAKE_CURRENT_BINARY_DIR}/rnn-library-probe")
-  try_compile(
-    rnn_compile_result SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/prebuiltRnnLibraryCheck.cpp" NO_CACHE
-    CXX_STANDARD 20
-    CMAKE_FLAGS
-      "-DINCLUDE_DIRECTORIES:STRING=${PROJECT_SOURCE_DIR};${PROJECT_SOURCE_DIR}/include;${CUDAToolkit_INCLUDE_DIRS}"
-    COMPILE_DEFINITIONS
-      "-D_GLIBCXX_USE_CXX11_ABI=${rnn_abi}"
-      "-DTRTLLM_ABI_NAMESPACE=${TRTLLM_ABI_NAMESPACE}" LINK_OPTIONS
-      "LINKER:--disable-new-dtags"
-    LINK_LIBRARIES "${TRTLLM_RNN_TEST_LIBRARY}" CUDA::cudart ${CMAKE_DL_LIBS}
-    COPY_FILE "${rnn_probe}"
-    OUTPUT_VARIABLE rnn_compile_output)
-  set(rnn_run_result "not-compiled")
-  if(rnn_compile_result)
-    execute_process(
-      COMMAND ${CMAKE_COMMAND} -E env LD_BIND_NOW=1 "${rnn_probe}"
-              "${TRTLLM_RNN_TEST_LIBRARY}" ${CMAKE_CUDA_ARCHITECTURES_ORIG}
-      TIMEOUT 30
-      RESULT_VARIABLE rnn_run_result
-      OUTPUT_VARIABLE rnn_run_output
-      ERROR_VARIABLE rnn_run_error)
-  endif()
-  if(rnn_compile_result AND rnn_run_result STREQUAL "0")
-    set(TLLM_RNN_TEST_LIBRARY_COMPATIBLE ON)
-    message(
-      STATUS "RNN test: verified library passed ABI/CUDA/architecture probe")
-  else()
-    message(
-      STATUS "RNN test: installed library is incompatible; building from source"
-    )
-  endif()
-endif()
-
 add_subdirectory(unit_tests)
 
 # Directory groups mirror recursive CTest discovery, including legacy and

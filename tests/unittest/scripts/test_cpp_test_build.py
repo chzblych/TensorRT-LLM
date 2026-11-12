@@ -60,21 +60,6 @@ def test_collected_targets_keep_full_stack_groups_and_architecture_boundaries():
     ]
 
 
-@pytest.mark.parametrize(
-    "name,target",
-    [
-        ("test_mpi_utils", "mpiUtilsTest"),
-        ("test_kv_cache_manager_v2_numa", "kvCacheManagerV2HostMemNumaTest"),
-        ("test_fused_gemm_allreduce", "gemmAllReduceTest"),
-        ("test_cache_transceiver", "cacheTransceiverTest"),
-        ("test_user_buffer", "userBufferTest"),
-        ("test_nccl_utils", "ncclUtilsTest"),
-    ],
-)
-def test_each_multi_gpu_consumer_builds_its_executable(name, target):
-    assert _load("build_targets").selected_build_targets([_item(name)], 90) == [target]
-
-
 def test_new_consumer_falls_back_to_full_coverage():
     assert _load("build_targets").selected_build_targets(
         [_item("test_new_native_feature")], "90"

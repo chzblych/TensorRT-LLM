@@ -388,7 +388,10 @@ add_tllm_gtest(
   LABELS
   "unit;batch-manager;gpu")
 
-if(TLLM_RNN_TEST_LIBRARY_COMPATIBLE)
+set(TRTLLM_RNN_TEST_LIBRARY
+    ""
+    CACHE FILEPATH "Installed library from the matching CI build")
+if(TRTLLM_RNN_TEST_LIBRARY)
   add_tllm_gtest(
     rnnCacheFormatterTest
     SOURCES
@@ -398,7 +401,7 @@ if(TLLM_RNN_TEST_LIBRARY_COMPATIBLE)
     CUDA::cudart
     LABELS
     "unit;full-stack;host")
-  # Prefer the verified library directory over a caller's LD_LIBRARY_PATH.
+  # Load the same library used at link time.
   get_filename_component(rnn_library_dir "${TRTLLM_RNN_TEST_LIBRARY}" DIRECTORY)
   set_target_properties(rnnCacheFormatterTest PROPERTIES BUILD_RPATH
                                                          "${rnn_library_dir}")

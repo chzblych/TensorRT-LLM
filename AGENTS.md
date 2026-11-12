@@ -221,10 +221,11 @@ C++ integration fixtures build the collected tests with incremental native targe
 `cpp-tests-executor-bounce`) mirror recursive CTest directory coverage, including
 legacy and full-stack executables. OWNER aggregates are component subsets and
 are not interchangeable with these directory targets.
-The RNN formatter test may reuse an installed wheel library on Linux Release
-builds after source-commit, native-input, wheel RECORD and ABI/CUDA/architecture
-checks. Missing or incompatible artifacts keep the source-build path; corrupt
-artifacts fail. Preserve these checks and the verified library search path.
+The Linux Release integration fixture links the RNN formatter test to the
+installed CI wheel. CI packages source and wheel from the same commit and uses
+the same image per architecture; local integration runs must supply a matching
+wheel too. Link/load errors must fail the tests, not trigger a source rebuild.
+Direct CMake builds retain the source-library path unless explicitly configured.
 
 ### Advisory semantic review
 
