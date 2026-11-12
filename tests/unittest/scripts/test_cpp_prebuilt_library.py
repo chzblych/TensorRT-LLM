@@ -32,6 +32,7 @@ _ROOT = Path(__file__).resolve().parents[3]
 
 @pytest.fixture
 def artifact(tmp_path, monkeypatch):
+    monkeypatch.delenv("LD_PRELOAD", raising=False)
     spec = importlib.util.spec_from_file_location(
         "prebuilt_library", _ROOT / "tests/integration/defs/cpp/prebuilt_library.py"
     )
@@ -170,6 +171,7 @@ def test_loader_preload_falls_back(artifact, monkeypatch):
         ("debug", "OFF"),
         ("sanitizer", "OFF"),
         ("compiler_flags", "OFF"),
+        ("cuda_release_flags", "OFF"),
     ],
 )
 def test_native_compatibility_gate(tmp_path, case, expected):
@@ -232,6 +234,7 @@ def test_native_compatibility_gate(tmp_path, case, expected):
         f"set(CMAKE_CUDA_ARCHITECTURES_ORIG {90 if case == 'architecture' else 80})\n"
         f"set(SANITIZE {'address' if case == 'sanitizer' else 'OFF'})\n"
         f"set(CMAKE_CXX_FLAGS {'--coverage' if case == 'compiler_flags' else ''})\n"
+        f"set(CMAKE_CUDA_FLAGS_RELEASE {'--coverage' if case == 'cuda_release_flags' else ''})\n"
         "set(USE_CXX11_ABI 1)\n"
         'set(CUDAToolkit_INCLUDE_DIRS "${PROJECT_SOURCE_DIR}/include")\n'
         "add_library(CUDA::cudart INTERFACE IMPORTED)\n"
