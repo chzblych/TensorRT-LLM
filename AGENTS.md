@@ -228,8 +228,12 @@ uses the same image per architecture; local integration runs must supply a match
 wheel too. Link/load errors must fail the tests, not trigger a source rebuild.
 Direct CMake builds retain the source-library path unless explicitly configured.
 `CONFIG_LINUX_X86_64_VANILLA` and `CONFIG_LINUX_AARCH64` also build `google-tests`
-and install the `cpp_test_bundle` CMake component into the packaged `src/cpp/build`.
-Linux Release integration fixtures use this bundle directly, retaining CTest
+and publish the `cpp_test_bundle` CMake component as a separate
+`cpp-tests-<main-tar-name>` artifact. The main package does not include the test
+programs. Only `-CPP-` stages using these two build configurations fetch and unpack
+the companion into `src/cpp/build`, including fat-image consumers. Build reuse
+requires both artifacts. RTX5090 and RTXPro6000D run head-104 in dedicated CPP stages. Linux
+Release integration fixtures use this bundle directly, retaining CTest
 selection and retries. Static test libraries are linked into the executables;
 shared libraries come from the matching installed wheel. CTest discovers cases on
 the test node, so the build stage does not need a GPU. Without a bundle, or with

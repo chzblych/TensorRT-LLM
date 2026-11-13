@@ -668,6 +668,9 @@ def prepareLLMBuild(pipeline, config, versionOverride)
     // on the x86_64 vanilla build only, rather than in every build config.
     def typeCheck = (config == CONFIG_LINUX_X86_64_VANILLA)
     def artifacts = ["${tarName}": tarName]
+    if (buildFlags[CPP_TEST_BUNDLE]) {
+        artifacts["cpp-tests-${tarName}"] = "cpp-tests-${tarName}"
+    }
     def runner = {
         runLLMBuild(
             pipeline, buildFlags, tarName, is_linux_x86_64, versionOverride, typeCheck, artifacts)
@@ -778,7 +781,13 @@ def runLLMBuild(
     // Step 3: packaging wheels into tarfile
     sh "cp ${LLM_ROOT}/build/tensorrt_llm-*.whl TensorRT-LLM/"
     if (buildFlags[CPP_TEST_BUNDLE]) {
-        sh "cmake --install ${LLM_ROOT}/cpp/build --component cpp_test_bundle --prefix '${pwd()}/TensorRT-LLM/src/cpp/build'"
+        def cppTestTarName = "cpp-tests-${tarName}"
+        sh "cmake --install ${LLM_ROOT}/cpp/build --component cpp_test_bundle --prefix '${pwd()}/cpp-test-bundle/cpp/build'"
+        if (is_linux_x86_64) {
+            sh "tar --use-compress-program='pigz -k' -cf '${cppTestTarName}' -C cpp-test-bundle cpp"
+        } else {
+            sh "tar -czf '${cppTestTarName}' -C cpp-test-bundle cpp"
+        }
     }
 
     // Step 4: packaging attribution files into tarfile when they exist

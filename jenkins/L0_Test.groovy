@@ -2402,6 +2402,14 @@ def fetchBuildArtifact(pipeline, String artifactPath, String dest, String mode =
     }
 }
 
+def cppTestArtifactPath(String config, String stageName)
+{
+    if (!stageName.contains("-CPP-") || !(config in [VANILLA_CONFIG, LINUX_AARCH64_CONFIG])) {
+        return ""
+    }
+    return "${ARTIFACT_PATH}/cpp-tests-${BUILD_CONFIGS[config][TARNAME]}"
+}
+
 // Which build of <tarName> this stage tests, as the artifact path to read it
 // from with fetchBuildArtifact.
 //
@@ -2668,6 +2676,7 @@ def runLLMTestlistWithSbatch(pipeline, platform, testList, config=VANILLA_CONFIG
                 def makoOptsJson = transformMakoArgsToJson(["Mako options:"] + makoArgs)
                 String clusterNameForDurations = useClusterDurations ? partition.clusterName.replaceAll('[^a-zA-Z0-9]', '_') : null
                 def testListPathLocal = renderTestDB(pipeline, testList, llmSrcLocal, stageName, makoOptsJson, clusterNameForDurations)
+                def cppTestTarArtifactPath = cppTestArtifactPath(config, stageName)
                 // Copy the test list atomically. A retry that reuses a still-active job
                 // re-copies over ${testListPathNode} while that job may be reading it via
                 // --test-list; scp truncates-then-streams, so a concurrent read could see a
@@ -3013,6 +3022,7 @@ def runLLMTestlistWithSbatch(pipeline, platform, testList, config=VANILLA_CONFIG
                     export BASH_ENV="$scriptProfilerEnvPathNode"
                     export tarName=$tarName
                     export llmTarArtifactPath=$llmTarArtifactPath
+                    export cppTestTarArtifactPath="$cppTestTarArtifactPath"
                     export LLM_ARTIFACTS_PRIMARY=${llmArtifactsPrimary()}
                     export ARTIFACTORY_NETRC=$artifactoryNetrcPathNode
                     export ARTIFACTORY_CREDENTIAL_ID=$LLM_ARTIFACTS_CREDENTIALS_ID
@@ -6503,6 +6513,14 @@ def runLLMTestlistOnPlatformImpl(pipeline, platform, testList, config=VANILLA_CO
 
         // Process shard test list and create separate files for regular and isolate tests
         def preprocessedLists = processShardTestList(llmSrc, testDBList, splitId, splits, clusterDurationsPath)
+        def cppTestTarArtifactPath = cppTestArtifactPath(config, stageName)
+        if (cppTestTarArtifactPath) {
+            def cppTestArchive = "${llmPath}/cpp-tests.tar.gz"
+            timeout(time: 30, unit: 'MINUTES') {
+                fetchBuildArtifact(pipeline, cppTestTarArtifactPath, cppTestArchive)
+            }
+            sh "tar -zxf '${cppTestArchive}' -C '${llmSrc}'"
+        }
 
         // Test Coverage
         def TRTLLM_WHL_PATH = sh(returnStdout: true, script: "pip3 show tensorrt_llm | grep Location | cut -d ' ' -f 2").replaceAll("\\s","")
@@ -7557,6 +7575,7 @@ def launchTestJobs(pipeline, testFilter, globalVars)
         // Post-merge only: the `stage: post_merge` rows of l0_model_express, i.e. the TP=1 smoke
         // rows of the non-representative families and the accuracy canaries.
         "DGX_H100-2_GPUs-PyTorch-ModelExpress-Post-Merge-1": ["dgx-h100-x4", "l0_model_express", 1, 1, 2, true],
+        "RTX5090-CPP-1": ["rtx-5090", "l0_gb202", 1, 1],
         "RTX5090-PyTorch-1": ["rtx-5090", "l0_gb202", 1, 1],
         "RTX5080-PyTorch-1": ["rtx-5080", "l0_gb203", 1, 2],
         "RTX5080-PyTorch-2": ["rtx-5080", "l0_gb203", 2, 2],
@@ -7582,6 +7601,7 @@ def launchTestJobs(pipeline, testFilter, globalVars)
         // "RTXPro6000-PyTorch-Post-Merge-1": ["rtx-pro-6000", "l0_rtx_pro_6000", 1, 1],
         // "RTXPro6000-4_GPUs-PyTorch-Post-Merge-1": ["rtx-pro-6000-x4", "l0_rtx_pro_6000", 1, 2, 4],
         // "RTXPro6000-4_GPUs-PyTorch-Post-Merge-2": ["rtx-pro-6000-x4", "l0_rtx_pro_6000", 2, 2, 4],
+        "RTXPro6000D-CPP-1": ["rtx-pro-6000d", "l0_rtx_pro_6000", 1, 1],
         "RTXPro6000D-PyTorch-1": ["rtx-pro-6000d", "l0_rtx_pro_6000", 1, 1],
         "RTXPro6000D-PyTorch-Post-Merge-1": ["rtx-pro-6000d", "l0_rtx_pro_6000", 1, 1],
         // Disable RTXPro6000D-4_GPUs-PyTorch-Post-Merge-1 and RTXPro6000D-4_GPUs-PyTorch-Post-Merge-2 due to some nodes are offline temporarily.
