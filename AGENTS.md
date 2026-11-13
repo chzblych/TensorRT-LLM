@@ -227,11 +227,13 @@ NIXL/Mooncake wrappers. CI packages source and wheel from the same commit and
 uses the same image per architecture; local integration runs must supply a matching
 wheel too. Link/load errors must fail the tests, not trigger a source rebuild.
 Direct CMake builds retain the source-library path unless explicitly configured.
-CI also installs the `cpp_test_components` CMake component into the packaged
-source's `cpp/test_libs`: FMHA context and OSS MoE archives plus their producer
-compile interface. The integration fixture reuses that directory when present;
-local trees without it continue building these components from source. This adds
-no files to the public wheel and does not replace link/test failures with rebuilds.
+`CONFIG_LINUX_X86_64_VANILLA` and `CONFIG_LINUX_AARCH64` also build `google-tests`
+and install the `cpp_test_bundle` CMake component into the packaged `src/cpp/build`.
+Linux Release integration fixtures use this bundle directly, retaining CTest
+selection and retries. Static test libraries are linked into the executables;
+shared libraries come from the matching installed wheel. CTest discovers cases on
+the test node, so the build stage does not need a GPU. Without a bundle, or with
+an explicit `TRTLLM_BUILD_ROOT`, fixtures retain the incremental build path.
 
 ### Advisory semantic review
 

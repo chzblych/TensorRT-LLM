@@ -33,7 +33,15 @@ if(ENABLE_MULTI_DEVICE)
   include_directories(${MPI_C_INCLUDE_DIRS})
 endif()
 
+option(TRTLLM_BUILD_CPP_TEST_BUNDLE "Package runnable C++ tests for CI" OFF)
 set(TOP_LEVEL_DIR "${PROJECT_SOURCE_DIR}/..")
+set(test_working_directory)
+if(TRTLLM_BUILD_CPP_TEST_BUNDLE)
+  set(TOP_LEVEL_DIR ".")
+  get_filename_component(cpp_test_source_root "${PROJECT_SOURCE_DIR}/.."
+                         ABSOLUTE)
+  set(test_working_directory WORKING_DIRECTORY "${cpp_test_source_root}")
+endif()
 
 set(TRTLLM_TEST_LIB_DIR
     ""
@@ -82,27 +90,6 @@ if(TRTLLM_TEST_LIB_DIR)
   # dlopen-based tests must use the same CI libraries as directly linked tests.
   set(CMAKE_BUILD_RPATH "${TRTLLM_TEST_LIB_DIR};${CMAKE_BUILD_RPATH}")
   add_link_options("LINKER:--disable-new-dtags")
-endif()
-
-set(TRTLLM_TEST_COMPONENT_LIB_DIR
-    ""
-    CACHE PATH "Native test components packaged with the matching CI sources")
-if(TRTLLM_TEST_COMPONENT_LIB_DIR)
-  include("${TRTLLM_TEST_COMPONENT_LIB_DIR}/cpp_test_components.cmake")
-endif()
-foreach(component context_attention_src moe_gemm_src)
-  if(TARGET ${component})
-    if(TRTLLM_TEST_COMPONENT_LIB_DIR)
-      target_include_directories(
-        ${component}_test
-        INTERFACE $<TARGET_PROPERTY:${component},INTERFACE_INCLUDE_DIRECTORIES>)
-    else()
-      add_library(${component}_test ALIAS ${component})
-    endif()
-  endif()
-endforeach()
-if(TRTLLM_TEST_COMPONENT_LIB_DIR AND TARGET moe_gemm_src_test)
-  target_link_libraries(moe_gemm_src_test INTERFACE tllm::kernel_moe_lora)
 endif()
 
 add_custom_target(google-tests)
@@ -194,7 +181,13 @@ function(add_tllm_gtest test_name)
     list(APPEND discovery_args TEST_PREFIX "${ARG_TEST_PREFIX}")
   endif()
   gtest_discover_tests(
-    ${test_name} ${discovery_args} DISCOVERY_MODE PRE_TEST DISCOVERY_TIMEOUT 30
+    ${test_name}
+    ${discovery_args}
+    ${test_working_directory}
+    DISCOVERY_MODE
+    PRE_TEST
+    DISCOVERY_TIMEOUT
+    30
     PROPERTIES LABELS "${ARG_LABELS}" ${test_properties})
 
   add_dependencies(google-tests ${test_name})
@@ -238,7 +231,7 @@ function(add_gtest test_name test_src)
     list(APPEND discovery_args TEST_PREFIX "${ARGS_TEST_PREFIX}")
   endif()
   gtest_discover_tests(
-    ${test_name} ${discovery_args}
+    ${test_name} ${discovery_args} ${test_working_directory}
     PROPERTIES ${test_properties}
                DISCOVERY_MODE
                PRE_TEST # WAR for DLL discovery on windows.
@@ -266,6 +259,24 @@ function(add_tllm_test_directory_group directory)
     get_target_property(type ${target} TYPE)
     if(type STREQUAL "EXECUTABLE")
       add_dependencies(${group_target} ${target})
+      if(TRTLLM_BUILD_CPP_TEST_BUNDLE)
+        get_target_property(binary_dir ${target} BINARY_DIR)
+        file(RELATIVE_PATH destination "${CMAKE_BINARY_DIR}" "${binary_dir}")
+        file(RELATIVE_PATH library_path "${binary_dir}"
+             "${CMAKE_BINARY_DIR}/lib")
+        set_target_properties(
+          ${target}
+          PROPERTIES
+            INSTALL_RPATH
+            "$ORIGIN/${library_path};$ORIGIN/${library_path}/nixl;$ORIGIN/${library_path}/ucx"
+            INSTALL_RPATH_USE_LINK_PATH TRUE)
+        target_link_options(${target} PRIVATE "LINKER:--disable-new-dtags")
+        install(
+          TARGETS ${target}
+          RUNTIME DESTINATION "${destination}"
+                  COMPONENT cpp_test_bundle
+                  EXCLUDE_FROM_ALL)
+      endif()
     endif()
   endforeach()
   get_property(
@@ -288,3 +299,11 @@ get_property(
 foreach(directory IN LISTS test_directories)
   add_tllm_test_directory_group("${directory}")
 endforeach()
+
+if(TRTLLM_BUILD_CPP_TEST_BUNDLE)
+  configure_file(InstallCppTestBundle.cmake.in InstallCppTestBundle.cmake @ONLY)
+  install(
+    SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/InstallCppTestBundle.cmake"
+    COMPONENT cpp_test_bundle
+    EXCLUDE_FROM_ALL)
+endif()

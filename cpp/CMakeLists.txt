@@ -729,38 +729,6 @@ include_directories(SYSTEM ${TORCH_INCLUDE_DIRS})
 
 add_subdirectory(tensorrt_llm)
 
-# CI packages these existing archives with the matching test sources. Keep their
-# producer compile interface: a multi-architecture build can enable more GEMMs.
-set(cpp_test_component_config "# Generated test component imports.\n")
-foreach(component context_attention_src moe_gemm_src)
-  if(TARGET ${component})
-    install(
-      TARGETS ${component}
-      ARCHIVE DESTINATION .
-              COMPONENT cpp_test_components
-              EXCLUDE_FROM_ALL)
-    string(
-      APPEND
-      cpp_test_component_config
-      "add_library(${component}_test STATIC IMPORTED)\n"
-      "set_target_properties(${component}_test PROPERTIES\n"
-      "  IMPORTED_LOCATION \"\${CMAKE_CURRENT_LIST_DIR}/$<TARGET_FILE_NAME:${component}>\"\n"
-      "  IMPORTED_LINK_INTERFACE_LANGUAGES CUDA\n"
-      "  INTERFACE_COMPILE_DEFINITIONS \"$<TARGET_PROPERTY:${component},INTERFACE_COMPILE_DEFINITIONS>\"\n"
-      "  INTERFACE_COMPILE_OPTIONS \"$<TARGET_PROPERTY:${component},INTERFACE_COMPILE_OPTIONS>\")\n"
-    )
-  endif()
-endforeach()
-file(
-  GENERATE
-  OUTPUT "${CMAKE_BINARY_DIR}/cpp_test_components.cmake"
-  CONTENT "${cpp_test_component_config}")
-install(
-  FILES "${CMAKE_BINARY_DIR}/cpp_test_components.cmake"
-  DESTINATION .
-  COMPONENT cpp_test_components
-  EXCLUDE_FROM_ALL)
-
 if(BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)

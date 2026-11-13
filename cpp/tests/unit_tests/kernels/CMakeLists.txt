@@ -46,7 +46,7 @@ add_gtest(mixtureOfExpertsTest moe/mixtureOfExpertsTest.cu)
 
 # If we are using oss cutlass, build an explicit internal test
 if(USING_OSS_CUTLASS_MOE_GEMM)
-  target_link_libraries(mixtureOfExpertsTest PRIVATE moe_gemm_src_test)
+  target_link_libraries(mixtureOfExpertsTest PRIVATE moe_gemm_src)
   target_compile_definitions(mixtureOfExpertsTest
                              PUBLIC USING_OSS_CUTLASS_MOE_GEMM)
 
@@ -228,7 +228,7 @@ add_tllm_gtest(
   fmhaHead104Test.cpp
   ../../../tensorrt_llm/kernels/fmhaDispatcher.cpp
   LINK_LIBRARIES
-  context_attention_src_test
+  context_attention_src
   trtllm_gen_fmha
   ${CUDA_DRV_LIB}
   tllm::common_environment
@@ -243,7 +243,7 @@ add_tllm_gtest(
   fmhaDispatcherTest.cpp
   ../../../tensorrt_llm/kernels/fmhaDispatcher.cpp
   LINK_LIBRARIES
-  context_attention_src_test
+  context_attention_src
   trtllm_gen_fmha
   ${CUDA_DRV_LIB}
   tllm::common_environment
