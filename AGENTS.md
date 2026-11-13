@@ -227,6 +227,11 @@ NIXL/Mooncake wrappers. CI packages source and wheel from the same commit and
 uses the same image per architecture; local integration runs must supply a matching
 wheel too. Link/load errors must fail the tests, not trigger a source rebuild.
 Direct CMake builds retain the source-library path unless explicitly configured.
+CI also installs the `cpp_test_components` CMake component into the packaged
+source's `cpp/test_libs`: FMHA context and OSS MoE archives plus their producer
+compile interface. The integration fixture reuses that directory when present;
+local trees without it continue building these components from source. This adds
+no files to the public wheel and does not replace link/test failures with rebuilds.
 
 ### Advisory semantic review
 

@@ -771,6 +771,7 @@ def runLLMBuild(
 
     // Step 3: packaging wheels into tarfile
     sh "cp ${LLM_ROOT}/build/tensorrt_llm-*.whl TensorRT-LLM/"
+    sh "cmake --install ${LLM_ROOT}/cpp/build --component cpp_test_components --prefix '${pwd()}/TensorRT-LLM/src/cpp/test_libs'"
 
     // Step 4: packaging attribution files into tarfile when they exist
     sh "mkdir -p TensorRT-LLM/attribution"

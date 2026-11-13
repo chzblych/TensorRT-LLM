@@ -84,6 +84,27 @@ if(TRTLLM_TEST_LIB_DIR)
   add_link_options("LINKER:--disable-new-dtags")
 endif()
 
+set(TRTLLM_TEST_COMPONENT_LIB_DIR
+    ""
+    CACHE PATH "Native test components packaged with the matching CI sources")
+if(TRTLLM_TEST_COMPONENT_LIB_DIR)
+  include("${TRTLLM_TEST_COMPONENT_LIB_DIR}/cpp_test_components.cmake")
+endif()
+foreach(component context_attention_src moe_gemm_src)
+  if(TARGET ${component})
+    if(TRTLLM_TEST_COMPONENT_LIB_DIR)
+      target_include_directories(
+        ${component}_test
+        INTERFACE $<TARGET_PROPERTY:${component},INTERFACE_INCLUDE_DIRECTORIES>)
+    else()
+      add_library(${component}_test ALIAS ${component})
+    endif()
+  endif()
+endforeach()
+if(TRTLLM_TEST_COMPONENT_LIB_DIR AND TARGET moe_gemm_src_test)
+  target_link_libraries(moe_gemm_src_test INTERFACE tllm::kernel_moe_lora)
+endif()
+
 add_custom_target(google-tests)
 foreach(owner common runtime executor batch-manager kernel)
   add_custom_target(${owner}-tests)

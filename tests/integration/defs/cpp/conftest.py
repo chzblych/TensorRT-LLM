@@ -122,6 +122,7 @@ def build_google_tests(request, build_type):
     _logger.info(f"Using CUDA arch: {cuda_arch}")
     targets = selected_build_targets(request.session.items, cuda_arch)
     library_dir = None
+    component_dir = _cpp.find_root_dir() / "cpp" / "test_libs"
     if _sys.platform == "linux" and build_type == "Release":
         # CI packages the source and wheel from the same commit and uses the
         # same image per architecture. Let the real tests expose link/load errors.
@@ -138,7 +139,12 @@ def build_google_tests(request, build_type):
         skip_building_wheel=True,
         configure_only=True,
         generate_fmha=True,
-        extra_cmake_vars=[f"TRTLLM_TEST_LIB_DIR={library_dir or ''}"],
+        extra_cmake_vars=[
+            f"TRTLLM_TEST_LIB_DIR={library_dir or ''}",
+            "TRTLLM_TEST_COMPONENT_LIB_DIR=" +
+            (str(component_dir)
+             if library_dir and component_dir.is_dir() else ""),
+        ],
         # The DLFW base image ships no libnvrtc_static.a, so the default
         # CUDA::nvrtc_static target does not exist. The wheel builds get
         # NVRTC_DYNAMIC_LINKING=ON implicitly (via ENABLE_BOLT_COMPATIBLE);
