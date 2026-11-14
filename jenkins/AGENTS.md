@@ -19,9 +19,6 @@ limitations under the License.
 Scope: this directory and its descendants. Supplements the repository-root
 `AGENTS.md`.
 
-Single-GPU H100 CPP, PyTorch/Ray and FMHA stages use `DGX_H100` names and
-`auto:dgx-h100-x1` in `x86SlurmTestConfigs`, with the `l0_h100` test list.
-
 ## Stage maintenance
 
 - Edit `jenkins/config/maintenance_stages.txt`. Blank lines and `#` comments

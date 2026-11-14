@@ -69,7 +69,7 @@ download_cpp_tests() {
     if [[ -z "${cppTestTarArtifactPath:-}" ]]; then
         return 0
     fi
-    cppTestArchive="$resourcePathNode/cpp-tests.${SLURM_JOB_ID:-local}.${SLURM_NODEID:-0}.tar.gz"
+    cppTestArchive="$resourcePathNode/cpp-tests-$tarName"
     if ! retry_command --timeout 1800 --retry-on "$FETCH_TRANSFER_FAILED,124" \
         bash "$fetchHelperPath" "$cppTestTarArtifactPath" "$cppTestArchive"; then
         remove_artifactory_netrc
@@ -154,9 +154,7 @@ slurm_install_setup() {
             fi
             llmSrcNode=$resourcePathNode/TensorRT-LLM/src
             retry_command --timeout 2700 bash -c "cd $llmSrcNode && pip3 install --retries 10 -r requirements-dev.txt"
-            if [[ $stageName != *-CPP-* ]]; then
-                retry_command --timeout 2700 bash -c "cd $llmSrcNode && pip3 install --retries 10 -r requirements-grpc-smg.txt"
-            fi
+            retry_command --timeout 2700 bash -c "cd $llmSrcNode && pip3 install --retries 10 -r requirements-grpc-smg.txt"
             if [[ $pytestCommand == *--run-ray* ]]; then
                 retry_command --timeout 2700 bash "$llmSrcNode/jenkins/scripts/install_mamba.sh"
             fi

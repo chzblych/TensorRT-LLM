@@ -224,7 +224,6 @@ def _run_slurm_install(
     *,
     cpp_bundle: bool = False,
     fat: bool = False,
-    stage_name: str = "test-stage",
 ) -> _Run:
     """Run slurm_install.sh as a node of a Slurm job does, up to extracting the downloaded package.
 
@@ -294,7 +293,7 @@ def _run_slurm_install(
             "tarName": "TensorRT-LLM.tar.gz",
             "llmTarArtifactPath": ARTIFACT_PATH,
             "resourcePathNode": str(resource_dir),
-            "stageName": stage_name,
+            "stageName": "RTX5090-CPP-1" if cpp_bundle else "test-stage",
             "pytestCommand": "pytest",
             "cppTestTarArtifactPath": cpp_artifact_path if cpp_bundle else "",
             "SKIP_INSTALL": "1" if fat else "0",
@@ -344,7 +343,7 @@ def _run_slurm_install(
     for call in run.fetch_calls:
         expected_destinations = {
             ARTIFACT_PATH: f"{run.archive}.tmp.4321.2",
-            cpp_artifact_path: str(resource_dir / "cpp-tests.4321.2.tar.gz"),
+            cpp_artifact_path: str(resource_dir / "cpp-tests-TensorRT-LLM.tar.gz"),
         }
         assert call["args"][1] == expected_destinations[call["args"][0]]
         assert call["env"] == {
@@ -363,7 +362,7 @@ def test_slurm_install_cpp_bundle_uses_existing_credentials(tmp_path: Path, fat:
     run = _run_slurm_install(tmp_path, [0], cpp_bundle=True, fat=fat)
     assert run.returncode == 42, run.output
     assert len(run.fetch_calls) == (1 if fat else 2)
-    cpp_archive = run.archive.parent / "cpp-tests.4321.2.tar.gz"
+    cpp_archive = run.archive.parent / "cpp-tests-TensorRT-LLM.tar.gz"
     assert cpp_archive.read_text() == PAYLOAD
     assert (tmp_path / "tar_args.txt").read_text().splitlines() == [
         "-zxf",
@@ -384,15 +383,6 @@ def test_slurm_install_missing_cpp_bundle_fails(tmp_path: Path) -> None:
     assert "C++ test artifact download failed:" in run.stdout
     assert not (tmp_path / "tar_args.txt").exists()
     assert not run.netrc.exists()
-
-
-def test_cpp_setup_keeps_the_test_environment_without_serving_dependencies(tmp_path: Path) -> None:
-    run = _run_slurm_install(tmp_path, [0], cpp_bundle=True, stage_name="RTX5090-CPP-1")
-    assert run.returncode == 42, run.output
-    installs = (tmp_path / "install_args.txt").read_text()
-    assert "requirements-dev.txt" in installs
-    assert "tensorrt_llm-*.whl" in installs
-    assert "requirements-grpc-smg.txt" not in installs
 
 
 def test_slurm_install_setup_downloads_package_through_retries(tmp_path: Path) -> None:
