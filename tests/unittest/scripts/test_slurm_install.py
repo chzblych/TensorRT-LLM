@@ -224,6 +224,7 @@ def _run_slurm_install(
     *,
     cpp_bundle: bool = False,
     fat: bool = False,
+    stage_name: str = "test-stage",
 ) -> _Run:
     """Run slurm_install.sh as a node of a Slurm job does, up to extracting the downloaded package.
 
@@ -260,7 +261,10 @@ def _run_slurm_install(
         '  mkdir -p "$TEST_RESOURCE_DIR/TensorRT-LLM/src"\n  exit 0\nfi\nexit 42\n',
     )
     for command in ("apt-get", "pip3"):
-        _write_executable(bin_dir / command, "#!/bin/bash\nexit 0\n")
+        _write_executable(
+            bin_dir / command,
+            '#!/bin/bash\nprintf "%s\\n" "$*" >> "$INSTALL_STUB_LOG"\nexit 0\n',
+        )
     _write_executable(bin_dir / "sleep", '#!/bin/bash\necho "$@" >> "$SLEEP_STUB_LOG"\n')
     _write_executable(
         bin_dir / "timeout", '#!/bin/bash\necho "$1" >> "$TIMEOUT_STUB_LOG"\nshift\nexec "$@"\n'
@@ -290,12 +294,13 @@ def _run_slurm_install(
             "tarName": "TensorRT-LLM.tar.gz",
             "llmTarArtifactPath": ARTIFACT_PATH,
             "resourcePathNode": str(resource_dir),
-            "stageName": "test-stage",
+            "stageName": stage_name,
             "pytestCommand": "pytest",
             "cppTestTarArtifactPath": cpp_artifact_path if cpp_bundle else "",
             "SKIP_INSTALL": "1" if fat else "0",
             "TEST_CPP_BUNDLE": "1" if cpp_bundle else "0",
             "TEST_RESOURCE_DIR": str(resource_dir),
+            "INSTALL_STUB_LOG": str(tmp_path / "install_args.txt"),
             "SLURM_LOCALID": "0",
             "SLURM_JOB_ID": "4321",
             "SLURM_STEP_ID": "0",
@@ -368,6 +373,8 @@ def test_slurm_install_cpp_bundle_uses_existing_credentials(tmp_path: Path, fat:
     ]
     assert not run.netrc_at_extraction
     assert not run.netrc.exists()
+    if not fat:
+        assert "requirements-grpc-smg.txt" in (tmp_path / "install_args.txt").read_text()
 
 
 def test_slurm_install_missing_cpp_bundle_fails(tmp_path: Path) -> None:
@@ -377,6 +384,15 @@ def test_slurm_install_missing_cpp_bundle_fails(tmp_path: Path) -> None:
     assert "C++ test artifact download failed:" in run.stdout
     assert not (tmp_path / "tar_args.txt").exists()
     assert not run.netrc.exists()
+
+
+def test_cpp_setup_keeps_the_test_environment_without_serving_dependencies(tmp_path: Path) -> None:
+    run = _run_slurm_install(tmp_path, [0], cpp_bundle=True, stage_name="RTX5090-CPP-1")
+    assert run.returncode == 42, run.output
+    installs = (tmp_path / "install_args.txt").read_text()
+    assert "requirements-dev.txt" in installs
+    assert "tensorrt_llm-*.whl" in installs
+    assert "requirements-grpc-smg.txt" not in installs
 
 
 def test_slurm_install_setup_downloads_package_through_retries(tmp_path: Path) -> None:

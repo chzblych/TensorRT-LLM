@@ -37,6 +37,11 @@ option(TRTLLM_BUILD_CPP_TEST_BUNDLE "Package runnable C++ tests for CI" OFF)
 set(TOP_LEVEL_DIR "${PROJECT_SOURCE_DIR}/..")
 set(test_working_directory)
 if(TRTLLM_BUILD_CPP_TEST_BUNDLE)
+  # BOLT consumes wheel libraries; test binaries retain symbols without the
+  # extra static relocation records needed by the optimizer.
+  get_directory_property(test_link_options LINK_OPTIONS)
+  list(REMOVE_ITEM test_link_options "-Wl,--emit-relocs")
+  set_property(DIRECTORY PROPERTY LINK_OPTIONS "${test_link_options}")
   set(TOP_LEVEL_DIR ".")
   get_filename_component(cpp_test_source_root "${PROJECT_SOURCE_DIR}/.."
                          ABSOLUTE)
@@ -259,24 +264,27 @@ function(add_tllm_test_directory_group directory)
     get_target_property(type ${target} TYPE)
     if(type STREQUAL "EXECUTABLE")
       add_dependencies(${group_target} ${target})
-      if(TRTLLM_BUILD_CPP_TEST_BUNDLE)
-        get_target_property(binary_dir ${target} BINARY_DIR)
-        file(RELATIVE_PATH destination "${CMAKE_BINARY_DIR}" "${binary_dir}")
-        file(RELATIVE_PATH library_path "${binary_dir}"
-             "${CMAKE_BINARY_DIR}/lib")
-        set_target_properties(
-          ${target}
-          PROPERTIES
-            INSTALL_RPATH
-            "$ORIGIN/${library_path};$ORIGIN/${library_path}/nixl;$ORIGIN/${library_path}/ucx"
-            INSTALL_RPATH_USE_LINK_PATH TRUE)
-        target_link_options(${target} PRIVATE "LINKER:--disable-new-dtags")
-        install(
-          TARGETS ${target}
-          RUNTIME DESTINATION "${destination}"
-                  COMPONENT cpp_test_bundle
-                  EXCLUDE_FROM_ALL)
-      endif()
+    endif()
+    if(TRTLLM_BUILD_CPP_TEST_BUNDLE AND (type STREQUAL "EXECUTABLE"
+                                         OR type STREQUAL "SHARED_LIBRARY"))
+      get_target_property(binary_dir ${target} BINARY_DIR)
+      file(RELATIVE_PATH destination "${CMAKE_BINARY_DIR}" "${binary_dir}")
+      file(RELATIVE_PATH library_path "${binary_dir}" "${CMAKE_BINARY_DIR}/lib")
+      set_target_properties(
+        ${target}
+        PROPERTIES
+          INSTALL_RPATH
+          "$ORIGIN;$ORIGIN/${library_path};$ORIGIN/${library_path}/nixl;$ORIGIN/${library_path}/ucx"
+          INSTALL_RPATH_USE_LINK_PATH TRUE)
+      target_link_options(${target} PRIVATE "LINKER:--disable-new-dtags")
+      install(
+        TARGETS ${target}
+        RUNTIME DESTINATION "${destination}"
+                COMPONENT cpp_test_bundle
+                EXCLUDE_FROM_ALL
+        LIBRARY DESTINATION "${destination}"
+                COMPONENT cpp_test_bundle
+                EXCLUDE_FROM_ALL)
     endif()
   endforeach()
   get_property(

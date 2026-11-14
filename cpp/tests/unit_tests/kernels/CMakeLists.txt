@@ -220,19 +220,28 @@ add_tllm_gtest(
   LABELS
   "unit;kernels;attention-mask;gpu")
 add_gtest(fmhaDsv4EpilogueFusionTest fmhaDsv4EpilogueFusionTest.cpp)
+set(fmha_test_sources ../../../tensorrt_llm/kernels/fmhaDispatcher.cpp)
+set(fmha_test_libraries context_attention_src trtllm_gen_fmha ${CUDA_DRV_LIB}
+                        tllm::common_environment tllm::common_logging)
+if(TRTLLM_BUILD_CPP_TEST_BUNDLE)
+  add_library(tllm_test_fmha SHARED EXCLUDE_FROM_ALL ${fmha_test_sources})
+  target_compile_features(tllm_test_fmha PRIVATE cxx_std_20)
+  target_link_libraries(
+    tllm_test_fmha
+    PRIVATE ${fmha_test_libraries}
+    PUBLIC trtllm_gen_fmha_interface CUDA::cudart)
+  set(fmha_test_sources)
+  set(fmha_test_libraries tllm_test_fmha)
+endif()
 add_tllm_gtest(
   fmhaHead104Test
   OWNER
   kernel
   SOURCES
   fmhaHead104Test.cpp
-  ../../../tensorrt_llm/kernels/fmhaDispatcher.cpp
+  ${fmha_test_sources}
   LINK_LIBRARIES
-  context_attention_src
-  trtllm_gen_fmha
-  ${CUDA_DRV_LIB}
-  tllm::common_environment
-  tllm::common_logging
+  ${fmha_test_libraries}
   LABELS
   "unit;kernels;fmha;gpu")
 add_tllm_gtest(
@@ -241,13 +250,9 @@ add_tllm_gtest(
   kernel
   SOURCES
   fmhaDispatcherTest.cpp
-  ../../../tensorrt_llm/kernels/fmhaDispatcher.cpp
+  ${fmha_test_sources}
   LINK_LIBRARIES
-  context_attention_src
-  trtllm_gen_fmha
-  ${CUDA_DRV_LIB}
-  tllm::common_environment
-  tllm::common_logging
+  ${fmha_test_libraries}
   LABELS
   "unit;kernel;host")
 

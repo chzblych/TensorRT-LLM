@@ -908,7 +908,7 @@ def getInfraDryRunPytestTargets(testListPath) {
     return targets
 }
 
-def processShardTestList(llmSrc, testDBList, splitId, splits, durationsPath="") {
+def processShardTestList(llmSrc, testDBList, splitId, splits, stageName, durationsPath="") {
     // Preprocess testDBList to extract ISOLATION markers
     echo "Preprocessing testDBList to extract ISOLATION markers..."
 
@@ -974,6 +974,9 @@ def processShardTestList(llmSrc, testDBList, splitId, splits, durationsPath="") 
     ]
     if (durationsPath) {
         testListCmd += ["--durations-path=${durationsPath}"]
+    }
+    if (stageName.contains("-CPP-") && !isInfraDryRun()) {
+        testListCmd += ["${llmSrc}/tests/integration/defs/cpp"]
     }
     testListCmd += getInfraDryRunPytestTargets(cleanedTestDBList)
 
@@ -2237,6 +2240,9 @@ def getPytestBaseCommandLine(
     testCmdLine += ["--unittest-markexpr='${unittestMarkExpr}'"]
     if (extraArgs) {
         testCmdLine += extraArgs
+    }
+    if (stageName.contains("-CPP-") && !isInfraDryRun()) {
+        testCmdLine += ["${llmSrc}/tests/integration/defs/cpp"]
     }
     return testCmdLine as String[]
 }
@@ -6336,7 +6342,9 @@ def runLLMTestlistOnPlatformImpl(pipeline, platform, testList, config=VANILLA_CO
         // setup HF_HOME to cache model and datasets
         // init the huggingface cache from nfs, since the nfs is read-only, and HF_HOME needs to be writable, otherwise it will fail at creating file lock
         sh "mkdir -p ${HF_HOME} && ls -alh ${HF_HOME}"
-        trtllm_utils.llmExecStepWithRetry(pipeline, script: "rsync -r ${MODEL_CACHE_DIR}/hugging-face-cache/ ${HF_HOME}/ && ls -lh ${HF_HOME}")
+        if (!stageName.contains("-CPP-")) {
+            trtllm_utils.llmExecStepWithRetry(pipeline, script: "rsync -r ${MODEL_CACHE_DIR}/hugging-face-cache/ ${HF_HOME}/ && ls -lh ${HF_HOME}")
+        }
         sh "df -h"
 
         // install package
@@ -6374,7 +6382,9 @@ def runLLMTestlistOnPlatformImpl(pipeline, platform, testList, config=VANILLA_CO
                 trtllm_utils.llmExecStepWithRetry(pipeline, script: "cd ${llmSrc} && pip3 install -r requirements-dev.txt")
                 // SMG's generated package remains an opt-in dependency. OpenEngine's
                 // private bindings and grpcio dependency are part of the base package.
-                trtllm_utils.llmExecStepWithRetry(pipeline, script: "cd ${llmSrc} && pip3 install -r requirements-grpc-smg.txt")
+                if (!stageName.contains("-CPP-")) {
+                    trtllm_utils.llmExecStepWithRetry(pipeline, script: "cd ${llmSrc} && pip3 install -r requirements-grpc-smg.txt")
+                }
             }
             if (stageName.contains("-Ray-")) {
                 trtllm_utils.llmExecStepWithRetry(pipeline, script: "pip3 install ray[default]==2.55.1")
@@ -6512,7 +6522,7 @@ def runLLMTestlistOnPlatformImpl(pipeline, platform, testList, config=VANILLA_CO
         }
 
         // Process shard test list and create separate files for regular and isolate tests
-        def preprocessedLists = processShardTestList(llmSrc, testDBList, splitId, splits, clusterDurationsPath)
+        def preprocessedLists = processShardTestList(llmSrc, testDBList, splitId, splits, stageName, clusterDurationsPath)
         def cppTestTarArtifactPath = cppTestArtifactPath(config, stageName)
         if (cppTestTarArtifactPath) {
             def cppTestArchive = "${llmPath}/cpp-tests.tar.gz"

@@ -154,7 +154,9 @@ slurm_install_setup() {
             fi
             llmSrcNode=$resourcePathNode/TensorRT-LLM/src
             retry_command --timeout 2700 bash -c "cd $llmSrcNode && pip3 install --retries 10 -r requirements-dev.txt"
-            retry_command --timeout 2700 bash -c "cd $llmSrcNode && pip3 install --retries 10 -r requirements-grpc-smg.txt"
+            if [[ $stageName != *-CPP-* ]]; then
+                retry_command --timeout 2700 bash -c "cd $llmSrcNode && pip3 install --retries 10 -r requirements-grpc-smg.txt"
+            fi
             if [[ $pytestCommand == *--run-ray* ]]; then
                 retry_command --timeout 2700 bash "$llmSrcNode/jenkins/scripts/install_mamba.sh"
             fi

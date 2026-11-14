@@ -234,8 +234,12 @@ programs. Only `-CPP-` stages using these two build configurations fetch and unp
 the companion into `src/cpp/build`, including fat-image consumers. Build reuse
 requires both artifacts. RTX5090 provides the SM120 head-104 CPP coverage. Linux
 Release integration fixtures use this bundle directly, retaining CTest
-selection and retries. Static test libraries are linked into the executables;
-shared libraries come from the matching installed wheel. CTest discovers cases on
+selection and retries. The two FMHA tests share a test-only library packaged next
+to their executables; other runtime libraries come from the matching installed
+wheel. Test artifacts keep symbols but omit BOLT's extra relocation records.
+CPP stages collect only `tests/integration/defs/cpp`, skip the HF cache copy and
+optional SMG dependencies, and retain the test framework and wheel installation.
+CTest discovers cases on
 the test node, so the build stage does not need a GPU. Without a bundle, or with
 an explicit `TRTLLM_BUILD_ROOT`, fixtures retain the incremental build path.
 
