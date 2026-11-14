@@ -50,8 +50,12 @@ l0_rtx_pro_6000:
   - unittest/_torch/modules/mamba/test_gdn_mixed_decode.py
   - test_e2e.py::test_ptp_quickstart_bert[VANILLA-BertForSequenceClassification-bert/bert-base-uncased-yelp-polarity]
   - test_e2e.py::test_ptp_quickstart_bert[TRTLLM-BertForSequenceClassification-bert/bert-base-uncased-yelp-polarity]
+  - test_e2e.py::test_ptp_quickstart_advanced[Qwen3-30B-A3B-Qwen3/Qwen3-30B-A3B] # 3mins
+  - test_e2e.py::test_ptp_quickstart_advanced[Qwen3-30B-A3B_fp8_hf-Qwen3/saved_models_Qwen3-30B-A3B_fp8_hf] # 3mins
   - test_e2e.py::test_ptp_quickstart_advanced[Qwen3-30B-A3B_nvfp4_hf-Qwen3/saved_models_Qwen3-30B-A3B_nvfp4_hf] # 2mins
   - test_e2e.py::test_ptp_quickstart_advanced[GPT-OSS-20B-gpt_oss/gpt-oss-20b]
+  - accuracy/test_llm_api_pytorch.py::TestLagunaXS::test_bf16
+  - accuracy/test_llm_api_pytorch.py::TestLagunaXS::test_fp8
   - accuracy/test_llm_api_pytorch.py::TestLagunaXS::test_nvfp4
   - unittest/_torch/moe/test_moe_module.py::test_configurable_moe_single_gpu[e8_k1_h512_i512-seq=8-dtype=torch.float16-backend=CUTLASS-quant=NVFP4-routing=Renormalize]
   - unittest/_torch/moe/test_moe_module.py::test_configurable_moe_single_gpu[e8_k1_h512_i512-seq=8-dtype=torch.bfloat16-backend=CUTLASS-quant=NVFP4-routing=Renormalize]
@@ -70,13 +74,12 @@ l0_rtx_pro_6000:
       stage: post_merge
       backend: pytorch
   tests:
+  # Runtime is dominated by loading ~61GB of weights; passing runs have reached
+  # 59.5 min against the 60 min default. https://nvbugs/6523751
+  - test_e2e.py::test_ptp_quickstart_advanced[GPT-OSS-120B-gpt_oss/gpt-oss-120b] TIMEOUT (75)
   - accuracy/test_llm_api_pytorch.py::TestGPTOSS::test_w4_1gpu[v1_kv_cache-True-True-cutlass-auto]
   - accuracy/test_llm_api_pytorch.py::TestQwen3_30B_A3B::test_nvfp4[latency_moe_cutlass-torch_compile=False] # 8mins
   - accuracy/test_llm_api_pytorch.py::TestQwen3_6_35B_A3B::test_nvfp4_w4a16
-  - test_e2e.py::test_ptp_quickstart_advanced[Qwen3-30B-A3B-Qwen3/Qwen3-30B-A3B] # 3mins
-  - test_e2e.py::test_ptp_quickstart_advanced[Qwen3-30B-A3B_fp8_hf-Qwen3/saved_models_Qwen3-30B-A3B_fp8_hf] # 3mins
-  - accuracy/test_llm_api_pytorch.py::TestLagunaXS::test_bf16
-  - accuracy/test_llm_api_pytorch.py::TestLagunaXS::test_fp8
 
 - condition:
     ranges:
