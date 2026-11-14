@@ -243,6 +243,11 @@ CTest discovers cases on
 the test node, so the build stage does not need a GPU. Without a bundle, or with
 an explicit `TRTLLM_BUILD_ROOT`, fixtures retain the incremental build path.
 
+RTX5090's PyTorch entries are consolidated into RTXPro6000D; RTX5090 runs only
+the head-104 CPP stage.
+The GPT-OSS-120B quickstart runs only when explicitly selecting
+`RTXPro6000D-PyTorch-OnDemand-1` with `--stage-list` or `--extra-stage`.
+
 ### Advisory semantic review
 
 The bot-to-bot semantic review workflow is disabled. See
