@@ -14,10 +14,12 @@
 # limitations under the License.
 
 import datetime
+import importlib.metadata
 import logging as _logger
 import os as _os
 import pathlib as _pl
 import subprocess as _sp
+import sys as _sys
 from typing import Optional, Sequence
 
 from build_wheel import get_build_dir as get_trt_llm_build_dir
@@ -58,6 +60,35 @@ def find_build_dir(build_type: str) -> _pl.Path:
     build_root = _os.environ.get("TRTLLM_BUILD_ROOT") or None
     build_dir = get_trt_llm_build_dir(None, build_type, build_root=build_root)
     return build_dir if build_dir.is_absolute() else root_dir / build_dir
+
+
+def find_test_bundle(build_type: str) -> Optional[_pl.Path]:
+    if (_sys.platform != "linux" or build_type != "Release"
+            or _os.environ.get("TRTLLM_BUILD_ROOT")):
+        return None
+    bundle = find_build_dir(build_type)
+    return bundle if (bundle / "CTestTestfile.cmake.in").is_file() else None
+
+
+def prepare_test_bundle(build_type: str) -> bool:
+    bundle = find_test_bundle(build_type)
+    if bundle is None:
+        return False
+    library_dir = importlib.metadata.distribution("tensorrt_llm").locate_file(
+        "tensorrt_llm/libs")
+    library_link = bundle / "lib"
+    if not library_link.is_symlink():
+        library_link.symlink_to(library_dir, target_is_directory=True)
+    source_root = str(find_root_dir())
+    for template in bundle.rglob("*.cmake.in"):
+        content = template.read_text().replace("__TRTLLM_CPP_BUNDLE_ROOT__",
+                                               str(bundle))
+        content = content.replace("__TRTLLM_CPP_SOURCE_ROOT__", source_root)
+        destination = template.with_suffix("")
+        if not destination.exists() or destination.read_text() != content:
+            destination.write_text(content)
+    _logger.info("Using packaged C++ tests: %s", bundle)
+    return True
 
 
 def run_command(command: Sequence[str],

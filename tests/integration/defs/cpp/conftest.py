@@ -117,17 +117,19 @@ def lora_setup(root_dir, cpp_resources_dir, python_exe):
 @pytest.fixture(scope="session")
 def build_google_tests(request, build_type):
 
+    if _cpp.prepare_test_bundle(build_type):
+        return
+
     cuda_arch = f"{request.param}"
 
     _logger.info(f"Using CUDA arch: {cuda_arch}")
     targets = selected_build_targets(request.session.items, cuda_arch)
-    library = None
-    if (_sys.platform == "linux" and build_type == "Release" and
-        ("cpp-tests-batch_manager" in targets or "google-tests" in targets)):
+    library_dir = None
+    if _sys.platform == "linux" and build_type == "Release":
         # CI packages the source and wheel from the same commit and uses the
         # same image per architecture. Let the real tests expose link/load errors.
-        library = importlib.metadata.distribution("tensorrt_llm").locate_file(
-            "tensorrt_llm/libs/libtensorrt_llm.so")
+        library_dir = importlib.metadata.distribution(
+            "tensorrt_llm").locate_file("tensorrt_llm/libs")
 
     build_trt_llm(
         build_type=build_type,
@@ -139,7 +141,9 @@ def build_google_tests(request, build_type):
         skip_building_wheel=True,
         configure_only=True,
         generate_fmha=True,
-        extra_cmake_vars=[f"TRTLLM_RNN_TEST_LIBRARY={library or ''}"],
+        extra_cmake_vars=[
+            f"TRTLLM_TEST_LIB_DIR={library_dir or ''}",
+        ],
         # The DLFW base image ships no libnvrtc_static.a, so the default
         # CUDA::nvrtc_static target does not exist. The wheel builds get
         # NVRTC_DYNAMIC_LINKING=ON implicitly (via ENABLE_BOLT_COMPATIBLE);
@@ -166,6 +170,9 @@ def build_kv_cache_compression_tests(request, build_type):
     The binary uses NO_TLLM_LINKAGE, so this skips the full-library
     build that build_google_tests pays for.
     """
+    if _cpp.prepare_test_bundle(build_type):
+        return
+
     cuda_arch = f"{request.param}"
 
     _logger.info(f"Using CUDA arch: {cuda_arch}")
@@ -207,6 +214,9 @@ def build_kv_cache_compression_tests(request, build_type):
 def build_fmha_head104_tests(request: pytest.FixtureRequest,
                              build_type: str) -> None:
     """Build the packed-QKV numerical regression and its native library."""
+    if _cpp.prepare_test_bundle(build_type):
+        return
+
     cuda_arch = f"{request.param}"
     _logger.info(f"Using CUDA arch: {cuda_arch}")
     build_trt_llm(

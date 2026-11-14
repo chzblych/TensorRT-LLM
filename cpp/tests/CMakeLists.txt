@@ -33,7 +33,69 @@ if(ENABLE_MULTI_DEVICE)
   include_directories(${MPI_C_INCLUDE_DIRS})
 endif()
 
+option(TRTLLM_BUILD_CPP_TEST_BUNDLE "Package runnable C++ tests for CI" OFF)
 set(TOP_LEVEL_DIR "${PROJECT_SOURCE_DIR}/..")
+set(test_working_directory)
+if(TRTLLM_BUILD_CPP_TEST_BUNDLE)
+  # BOLT consumes wheel libraries; test binaries retain symbols without the
+  # extra static relocation records needed by the optimizer.
+  get_directory_property(test_link_options LINK_OPTIONS)
+  list(REMOVE_ITEM test_link_options "-Wl,--emit-relocs")
+  set_property(DIRECTORY PROPERTY LINK_OPTIONS "${test_link_options}")
+  set(TOP_LEVEL_DIR ".")
+  get_filename_component(cpp_test_source_root "${PROJECT_SOURCE_DIR}/.."
+                         ABSOLUTE)
+  set(test_working_directory WORKING_DIRECTORY "${cpp_test_source_root}")
+endif()
+
+set(TRTLLM_TEST_LIB_DIR
+    ""
+    CACHE PATH "Installed libraries from the matching CI build")
+foreach(library ${SHARED_TARGET} decoder_attention_0 decoder_attention_1
+                tensorrt_llm_nixl_wrapper tensorrt_llm_mooncake_wrapper)
+  if(TARGET ${library})
+    if(TRTLLM_TEST_LIB_DIR)
+      add_library(${library}_test SHARED IMPORTED)
+      set_target_properties(
+        ${library}_test PROPERTIES IMPORTED_LOCATION
+                                   "${TRTLLM_TEST_LIB_DIR}/lib${library}.so")
+      if(library MATCHES "_wrapper$")
+        target_link_libraries(${library}_test INTERFACE ${SHARED_TARGET}_test)
+      endif()
+    else()
+      add_library(${library}_test ALIAS ${library})
+    endif()
+  endif()
+endforeach()
+if(TRTLLM_TEST_LIB_DIR)
+  target_include_directories(
+    ${SHARED_TARGET}_test
+    INTERFACE $<TARGET_PROPERTY:${SHARED_TARGET},INTERFACE_INCLUDE_DIRECTORIES>)
+  target_compile_definitions(
+    ${SHARED_TARGET}_test
+    INTERFACE $<TARGET_PROPERTY:${SHARED_TARGET},INTERFACE_COMPILE_DEFINITIONS>)
+  target_compile_options(
+    ${SHARED_TARGET}_test
+    INTERFACE $<TARGET_PROPERTY:${SHARED_TARGET},INTERFACE_COMPILE_OPTIONS>)
+  # Tests call decoder/CUDA APIs directly; keep source component targets out.
+  target_link_libraries(
+    ${SHARED_TARGET}_test
+    INTERFACE decoder_attention_0_test
+              decoder_attention_1_test
+              CUDA::cudart
+              ${CUDA_DRV_LIB}
+              ${CUBLAS_LIB}
+              ${CUBLASLT_LIB}
+              ${CURAND_LIB}
+              ${CMAKE_DL_LIBS})
+  if(ENABLE_MULTI_DEVICE)
+    target_link_libraries(${SHARED_TARGET}_test INTERFACE ${MPI_C_LIBRARIES}
+                                                          ${NCCL_LIB})
+  endif()
+  # dlopen-based tests must use the same CI libraries as directly linked tests.
+  set(CMAKE_BUILD_RPATH "${TRTLLM_TEST_LIB_DIR};${CMAKE_BUILD_RPATH}")
+  add_link_options("LINKER:--disable-new-dtags")
+endif()
 
 add_custom_target(google-tests)
 foreach(owner common runtime executor batch-manager kernel)
@@ -44,7 +106,8 @@ function(tllm_assert_test_is_component_local target)
   get_target_property(link_libraries ${target} LINK_LIBRARIES)
   # Reject expressions mentioning the full target in any configuration branch.
   string(REGEX REPLACE "[$<>:,]" ";" link_tokens "${link_libraries}")
-  if("${SHARED_TARGET}" IN_LIST link_tokens)
+  if("${SHARED_TARGET}" IN_LIST link_tokens OR "${SHARED_TARGET}_test" IN_LIST
+                                               link_tokens)
     message(
       FATAL_ERROR
         "${target} links the full TensorRT-LLM library; use FULL_STACK explicitly"
@@ -56,7 +119,8 @@ function(tllm_assert_test_is_component_local target)
     endif()
     get_target_property(dep_interface ${dep} INTERFACE_LINK_LIBRARIES)
     string(REGEX REPLACE "[$<>:,]" ";" dep_interface_tokens "${dep_interface}")
-    if("${SHARED_TARGET}" IN_LIST dep_interface_tokens)
+    if("${SHARED_TARGET}" IN_LIST dep_interface_tokens
+       OR "${SHARED_TARGET}_test" IN_LIST dep_interface_tokens)
       message(
         FATAL_ERROR
           "${target} links ${dep}, which interface-links the full TensorRT-LLM library; use FULL_STACK explicitly"
@@ -93,7 +157,7 @@ function(add_tllm_gtest test_name)
     target_link_libraries(${test_name} PRIVATE gtest_main)
   endif()
   if(ARG_FULL_STACK)
-    target_link_libraries(${test_name} PRIVATE ${SHARED_TARGET})
+    target_link_libraries(${test_name} PRIVATE ${SHARED_TARGET}_test)
     if(WIN32)
       target_link_libraries(${test_name} PRIVATE context_attention_src)
     endif()
@@ -122,7 +186,13 @@ function(add_tllm_gtest test_name)
     list(APPEND discovery_args TEST_PREFIX "${ARG_TEST_PREFIX}")
   endif()
   gtest_discover_tests(
-    ${test_name} ${discovery_args} DISCOVERY_MODE PRE_TEST DISCOVERY_TIMEOUT 30
+    ${test_name}
+    ${discovery_args}
+    ${test_working_directory}
+    DISCOVERY_MODE
+    PRE_TEST
+    DISCOVERY_TIMEOUT
+    30
     PROPERTIES LABELS "${ARG_LABELS}" ${test_properties})
 
   add_dependencies(google-tests ${test_name})
@@ -143,7 +213,7 @@ function(add_gtest test_name test_src)
     target_link_libraries(${test_name} PUBLIC gtest_main)
   endif()
   if(NOT ARGS_NO_TLLM_LINKAGE)
-    target_link_libraries(${test_name} PUBLIC ${SHARED_TARGET})
+    target_link_libraries(${test_name} PUBLIC ${SHARED_TARGET}_test)
     if(WIN32)
       target_link_libraries(${test_name} PRIVATE context_attention_src)
     endif()
@@ -166,7 +236,7 @@ function(add_gtest test_name test_src)
     list(APPEND discovery_args TEST_PREFIX "${ARGS_TEST_PREFIX}")
   endif()
   gtest_discover_tests(
-    ${test_name} ${discovery_args}
+    ${test_name} ${discovery_args} ${test_working_directory}
     PROPERTIES ${test_properties}
                DISCOVERY_MODE
                PRE_TEST # WAR for DLL discovery on windows.
@@ -195,6 +265,27 @@ function(add_tllm_test_directory_group directory)
     if(type STREQUAL "EXECUTABLE")
       add_dependencies(${group_target} ${target})
     endif()
+    if(TRTLLM_BUILD_CPP_TEST_BUNDLE AND (type STREQUAL "EXECUTABLE"
+                                         OR type STREQUAL "SHARED_LIBRARY"))
+      get_target_property(binary_dir ${target} BINARY_DIR)
+      file(RELATIVE_PATH destination "${CMAKE_BINARY_DIR}" "${binary_dir}")
+      file(RELATIVE_PATH library_path "${binary_dir}" "${CMAKE_BINARY_DIR}/lib")
+      set_target_properties(
+        ${target}
+        PROPERTIES
+          INSTALL_RPATH
+          "$ORIGIN;$ORIGIN/${library_path};$ORIGIN/${library_path}/nixl;$ORIGIN/${library_path}/ucx"
+          INSTALL_RPATH_USE_LINK_PATH TRUE)
+      target_link_options(${target} PRIVATE "LINKER:--disable-new-dtags")
+      install(
+        TARGETS ${target}
+        RUNTIME DESTINATION "${destination}"
+                COMPONENT cpp_test_bundle
+                EXCLUDE_FROM_ALL
+        LIBRARY DESTINATION "${destination}"
+                COMPONENT cpp_test_bundle
+                EXCLUDE_FROM_ALL)
+    endif()
   endforeach()
   get_property(
     children
@@ -216,3 +307,11 @@ get_property(
 foreach(directory IN LISTS test_directories)
   add_tllm_test_directory_group("${directory}")
 endforeach()
+
+if(TRTLLM_BUILD_CPP_TEST_BUNDLE)
+  configure_file(InstallCppTestBundle.cmake.in InstallCppTestBundle.cmake @ONLY)
+  install(
+    SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/InstallCppTestBundle.cmake"
+    COMPONENT cpp_test_bundle
+    EXCLUDE_FROM_ALL)
+endif()

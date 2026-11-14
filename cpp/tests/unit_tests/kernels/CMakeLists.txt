@@ -26,6 +26,12 @@ add_tllm_gtest(
   "unit;kernels;logits;gpu")
 add_gtest(cascadeAttentionKernelTest cascadeAttentionKernelTest.cpp)
 add_gtest(cascadeAttentionNumericsTest cascadeAttentionNumericsTest.cu)
+if(TRTLLM_TEST_LIB_DIR)
+  # The wheel does not retain the unused linear-cache MMHA entry point.
+  target_sources(
+    cascadeAttentionNumericsTest
+    PRIVATE ../../../tensorrt_llm/kernels/decoderMaskedMultiheadAttention.cu)
+endif()
 
 macro(remove_compile_definition TARGET_NAME DEFINITION)
   get_target_property(DEFS ${TARGET_NAME} COMPILE_DEFINITIONS)
@@ -40,6 +46,7 @@ add_gtest(mixtureOfExpertsTest moe/mixtureOfExpertsTest.cu)
 
 # If we are using oss cutlass, build an explicit internal test
 if(USING_OSS_CUTLASS_MOE_GEMM)
+  target_link_libraries(mixtureOfExpertsTest PRIVATE moe_gemm_src)
   target_compile_definitions(mixtureOfExpertsTest
                              PUBLIC USING_OSS_CUTLASS_MOE_GEMM)
 
@@ -47,6 +54,17 @@ if(USING_OSS_CUTLASS_MOE_GEMM)
             TEST_PREFIX "Internal.")
   remove_compile_definition(mixtureOfExpertsInternalTest
                             USING_OSS_CUTLASS_MOE_GEMM)
+endif()
+if(TRTLLM_TEST_LIB_DIR)
+  add_library(kernel_test_quantization STATIC EXCLUDE_FROM_ALL
+              ../../../tensorrt_llm/kernels/quantization.cu)
+  target_compile_features(kernel_test_quantization PRIVATE cxx_std_20)
+  target_link_libraries(kernel_test_quantization PRIVATE ${SHARED_TARGET}_test)
+  foreach(test mixtureOfExpertsTest mixtureOfExpertsInternalTest)
+    if(TARGET ${test})
+      target_link_libraries(${test} PRIVATE kernel_test_quantization)
+    endif()
+  endforeach()
 endif()
 
 add_tllm_gtest(
@@ -95,6 +113,11 @@ add_tllm_gtest(
   "unit;kernels;sparse-attention;gpu")
 
 add_gtest(cudaCoreGemmKernelTest cudaCoreGemm/cudaCoreGemmKernelTest.cpp)
+if(TRTLLM_TEST_LIB_DIR)
+  target_sources(
+    cudaCoreGemmKernelTest
+    PRIVATE ../../../tensorrt_llm/kernels/weightOnlyBatchedGemv/cudaCoreGemm.cu)
+endif()
 
 add_tllm_gtest(
   mlaChunkedPrefillTest
@@ -197,19 +220,28 @@ add_tllm_gtest(
   LABELS
   "unit;kernels;attention-mask;gpu")
 add_gtest(fmhaDsv4EpilogueFusionTest fmhaDsv4EpilogueFusionTest.cpp)
+set(fmha_test_sources ../../../tensorrt_llm/kernels/fmhaDispatcher.cpp)
+set(fmha_test_libraries context_attention_src trtllm_gen_fmha ${CUDA_DRV_LIB}
+                        tllm::common_environment tllm::common_logging)
+if(TRTLLM_BUILD_CPP_TEST_BUNDLE)
+  add_library(tllm_test_fmha SHARED EXCLUDE_FROM_ALL ${fmha_test_sources})
+  target_compile_features(tllm_test_fmha PRIVATE cxx_std_20)
+  target_link_libraries(
+    tllm_test_fmha
+    PRIVATE ${fmha_test_libraries}
+    PUBLIC trtllm_gen_fmha_interface CUDA::cudart)
+  set(fmha_test_sources)
+  set(fmha_test_libraries tllm_test_fmha)
+endif()
 add_tllm_gtest(
   fmhaHead104Test
   OWNER
   kernel
   SOURCES
   fmhaHead104Test.cpp
-  ../../../tensorrt_llm/kernels/fmhaDispatcher.cpp
+  ${fmha_test_sources}
   LINK_LIBRARIES
-  context_attention_src
-  trtllm_gen_fmha
-  ${CUDA_DRV_LIB}
-  tllm::common_environment
-  tllm::common_logging
+  ${fmha_test_libraries}
   LABELS
   "unit;kernels;fmha;gpu")
 add_tllm_gtest(
@@ -218,13 +250,9 @@ add_tllm_gtest(
   kernel
   SOURCES
   fmhaDispatcherTest.cpp
-  ../../../tensorrt_llm/kernels/fmhaDispatcher.cpp
+  ${fmha_test_sources}
   LINK_LIBRARIES
-  context_attention_src
-  trtllm_gen_fmha
-  ${CUDA_DRV_LIB}
-  tllm::common_environment
-  tllm::common_logging
+  ${fmha_test_libraries}
   LABELS
   "unit;kernel;host")
 
