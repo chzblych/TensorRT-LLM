@@ -221,11 +221,26 @@ C++ integration fixtures build the collected tests with incremental native targe
 `cpp-tests-executor-bounce`) mirror recursive CTest directory coverage, including
 legacy and full-stack executables. OWNER aggregates are component subsets and
 are not interchangeable with these directory targets.
-The Linux Release integration fixture links the RNN formatter test to the
-installed CI wheel. CI packages source and wheel from the same commit and uses
-the same image per architecture; local integration runs must supply a matching
+The Linux Release integration fixture links full-stack and legacy tests to the
+installed CI wheel, including decoder attention libraries and explicitly linked
+NIXL/Mooncake wrappers. CI packages source and wheel from the same commit and
+uses the same image per architecture; local integration runs must supply a matching
 wheel too. Link/load errors must fail the tests, not trigger a source rebuild.
 Direct CMake builds retain the source-library path unless explicitly configured.
+`CONFIG_LINUX_X86_64_VANILLA` and `CONFIG_LINUX_AARCH64` also build `google-tests`
+and publish the `cpp_test_bundle` CMake component as a separate
+`cpp-tests-<main-tar-name>` artifact. The main package does not include the test
+programs. Only `-CPP-` stages using these two build configurations fetch and unpack
+the companion into `src/cpp/build`, including fat-image consumers. Build reuse
+requires both artifacts. Linux Release integration fixtures use this bundle
+directly, retaining CTest selection and retries. The two FMHA tests share a
+test-only library packaged next to their executables; other runtime libraries
+come from the matching installed wheel. Test artifacts keep symbols but omit
+BOLT's extra relocation records.
+CPP stages collect only `tests/integration/defs/cpp` and use the standard test
+environment setup. CTest discovers cases on the test node, so the build stage
+does not need a GPU. Without a bundle, or with
+an explicit `TRTLLM_BUILD_ROOT`, fixtures retain the incremental build path.
 
 ### Advisory semantic review
 

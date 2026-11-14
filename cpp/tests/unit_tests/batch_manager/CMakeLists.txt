@@ -133,12 +133,12 @@ add_tllm_gtest(
   "unit;batch-manager;gpu")
 
 # GDS partial-copy cases load the NIXL wrapper at runtime.
-if(TARGET tensorrt_llm_nixl_wrapper)
-  add_dependencies(kvCacheManagerTest tensorrt_llm_nixl_wrapper)
+if(TARGET tensorrt_llm_nixl_wrapper_test)
+  add_dependencies(kvCacheManagerTest tensorrt_llm_nixl_wrapper_test)
   set_property(
     TARGET kvCacheManagerTest
     APPEND
-    PROPERTY BUILD_RPATH "$<TARGET_FILE_DIR:tensorrt_llm_nixl_wrapper>")
+    PROPERTY BUILD_RPATH "$<TARGET_FILE_DIR:tensorrt_llm_nixl_wrapper_test>")
 endif()
 
 add_tllm_gtest(
@@ -388,33 +388,8 @@ add_tllm_gtest(
   LABELS
   "unit;batch-manager;gpu")
 
-set(TRTLLM_RNN_TEST_LIBRARY
-    ""
-    CACHE FILEPATH "Installed library from the matching CI build")
-if(TRTLLM_RNN_TEST_LIBRARY)
-  add_tllm_gtest(
-    rnnCacheFormatterTest
-    SOURCES
-    rnnCacheFormatterTest.cpp
-    LINK_LIBRARIES
-    "${TRTLLM_RNN_TEST_LIBRARY}"
-    CUDA::cudart
-    LABELS
-    "unit;full-stack;host")
-  # Load the same library used at link time.
-  get_filename_component(rnn_library_dir "${TRTLLM_RNN_TEST_LIBRARY}" DIRECTORY)
-  set_target_properties(rnnCacheFormatterTest PROPERTIES BUILD_RPATH
-                                                         "${rnn_library_dir}")
-  target_link_options(rnnCacheFormatterTest PRIVATE
-                      "LINKER:--disable-new-dtags")
-  if(ENABLE_MULTI_DEVICE)
-    target_compile_definitions(rnnCacheFormatterTest
-                               PRIVATE ENABLE_MULTI_DEVICE)
-  endif()
-else()
-  add_tllm_gtest(rnnCacheFormatterTest SOURCES rnnCacheFormatterTest.cpp
-                 FULL_STACK LABELS "unit;full-stack;host")
-endif()
+add_tllm_gtest(rnnCacheFormatterTest SOURCES rnnCacheFormatterTest.cpp
+               FULL_STACK LABELS "unit;full-stack;host")
 
 add_tllm_gtest(
   agentTreeTest

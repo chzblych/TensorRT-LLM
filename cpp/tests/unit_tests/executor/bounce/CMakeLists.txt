@@ -146,7 +146,7 @@ if(NIXL_ROOT)
         ${BOUNCE_DIR}/GatherScatterKernel.cu
         ${BOUNCE_DIR}/ZmqControlChannel.cpp)
     set(BOUNCE_TEST_INCS ${CMAKE_BINARY_DIR}/_deps/cppzmq-src)
-    set(BOUNCE_TEST_LIBS tensorrt_llm_nixl_wrapper NIXL::nixl
+    set(BOUNCE_TEST_LIBS tensorrt_llm_nixl_wrapper_test NIXL::nixl
                          ${NIXL_BUILD_LIBRARY} PkgConfig::TLLM_BOUNCE_ZMQ)
 
     # One reactor test target: the bounce sources compiled in, plus the shared
@@ -202,7 +202,7 @@ if(NIXL_ROOT)
                    LABELS "unit;full-stack;gpu")
     target_include_directories(bounceAgentE2ETest PRIVATE ${BOUNCE_TEST_INCS})
     target_link_libraries(
-      bounceAgentE2ETest PRIVATE tensorrt_llm_nixl_wrapper NIXL::nixl
+      bounceAgentE2ETest PRIVATE tensorrt_llm_nixl_wrapper_test NIXL::nixl
                                  ${NIXL_BUILD_LIBRARY})
   endif()
 endif()
