@@ -19,6 +19,9 @@ limitations under the License.
 Scope: this directory and its descendants. Supplements the repository-root
 `AGENTS.md`.
 
+Single-GPU H100 CPP, PyTorch/Ray and FMHA stages use `DGX_H100` names and
+`auto:dgx-h100-x1` in `x86SlurmTestConfigs`, with the `l0_h100` test list.
+
 ## Stage maintenance
 
 - Edit `jenkins/config/maintenance_stages.txt`. Blank lines and `#` comments
@@ -29,7 +32,7 @@ Scope: this directory and its descendants. Supplements the repository-root
 
   ```text
   Reason: The affected H100 resource is temporarily unavailable.
-  H100_PCIe-PyTorch-1
+  DGX_H100-PyTorch-1
   ```
 
 - The following DGX B200 names and patterns are illustrative examples, not
