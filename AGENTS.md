@@ -232,7 +232,7 @@ and publish the `cpp_test_bundle` CMake component as a separate
 `cpp-tests-<main-tar-name>` artifact. The main package does not include the test
 programs. Only `-CPP-` stages using these two build configurations fetch and unpack
 the companion into `src/cpp/build`, including fat-image consumers. Build reuse
-requires both artifacts. RTX5090 and RTXPro6000D run head-104 in dedicated CPP stages. Linux
+requires both artifacts. RTX5090 provides the SM120 head-104 CPP coverage. Linux
 Release integration fixtures use this bundle directly, retaining CTest
 selection and retries. Static test libraries are linked into the executables;
 shared libraries come from the matching installed wheel. CTest discovers cases on

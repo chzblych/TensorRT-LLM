@@ -25,20 +25,6 @@ l0_rtx_pro_6000:
       linux_distribution_name: ubuntu*
     terms:
       stage: pre_merge
-      backend: cpp
-  tests:
-  - cpp/test_unit_tests.py::test_fmha_head104_unit_tests[120]
-- condition:
-    ranges:
-      system_gpu_count:
-        gte: 1
-        lte: 1
-    wildcards:
-      gpu:
-      - '*6000*'
-      linux_distribution_name: ubuntu*
-    terms:
-      stage: pre_merge
       backend: pytorch
   tests:
   # ------------- PyTorch tests ---------------
